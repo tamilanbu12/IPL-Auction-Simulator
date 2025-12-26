@@ -523,6 +523,7 @@ const RAW_DATA = {
 const PLAYER_IMAGE_MAP = {
   "David Warner":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRy2UoIz9RctCjtDw0iTDr9W8lq_jMqGo0JpQ&s",
+
   "Virat Kohli":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSXd7IOQ0NKyGMznUdvuNfPqT1PjyLLWs2PlA&s",
   "rohit sharma":
@@ -768,7 +769,6 @@ const PLAYER_IMAGE_MAP = {
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQgVBnKUGvBQjHnNvaw_A9lKO7c6MwP2EqHlQ&s",
   "Josh Inglis":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ96_gVuW8JTbxirRPH9mVAjB59jbtQRt6UtQ&s",
-
   // Add other images
 };
 
@@ -864,6 +864,7 @@ function getPlayerStats(name, roleHint = "bat") {
 }
 
 // --- DOM EVENT LISTENERS ---
+// 🔧 UPDATED: Save credentials on CREATE
 document.getElementById("doCreateBtn").addEventListener("click", () => {
   if (!socketAlive)
     return (lobbyError.innerText = "Connection lost. Reconnecting...");
@@ -873,6 +874,11 @@ document.getElementById("doCreateBtn").addEventListener("click", () => {
     parseInt(document.getElementById("teamCountSelect").value) || 10;
   if (!roomId || pass.length !== 4)
     return (lobbyError.innerText = "Invalid Details");
+
+  // Save credentials for auto-join
+  localStorage.setItem("ipl_last_room", roomId);
+  localStorage.setItem("ipl_last_pass", pass);
+
   socket.emit("create_room", {
     roomId,
     password: pass,
@@ -880,6 +886,7 @@ document.getElementById("doCreateBtn").addEventListener("click", () => {
   });
 });
 
+// 🔧 UPDATED: Save credentials on JOIN
 document.getElementById("doJoinBtn").addEventListener("click", () => {
   if (!socketAlive)
     return (lobbyError.innerText = "Connection lost. Reconnecting...");
@@ -887,6 +894,11 @@ document.getElementById("doJoinBtn").addEventListener("click", () => {
   const pass = document.getElementById("joinPass").value;
   if (!roomId || pass.length !== 4)
     return (lobbyError.innerText = "Check Credentials");
+
+  // Save credentials for auto-join
+  localStorage.setItem("ipl_last_room", roomId);
+  localStorage.setItem("ipl_last_pass", pass);
+
   socket.emit("join_room", { roomId, password: pass });
 });
 
@@ -907,8 +919,7 @@ socket.on("room_joined", (data) => {
   if (isAdmin) {
     document.body.classList.add("is-admin");
     document.getElementById("waitingText").style.display = "none";
-    // 🔧 NEW: NOTIFY ADMIN THAT THEY ARE BACK
-    logEvent("✅ Admin privileges restored via IP check.", true);
+    logEvent("✅ Admin privileges restored.", true);
   } else {
     document.body.classList.remove("is-admin");
     document.getElementById("startBtn").style.display = "none";
@@ -920,12 +931,10 @@ socket.on("room_joined", (data) => {
     connectedUsersCount = data.lobbyState.userCount;
     document.getElementById("joinedCount").innerText = connectedUsersCount;
 
-    // Check localStorage first for visual consistency
     const savedTeamKey = localStorage.getItem(`ipl_team_${data.roomId}`);
     if (savedTeamKey) {
       socket.emit("reclaim_team", savedTeamKey);
     } else {
-      // If server recognizes us via Auth ID, it might already assign us
       const myTeam = globalTeams.find((t) => t.ownerSocketId === socket.id);
       if (myTeam) mySelectedTeamKey = myTeam.bidKey;
     }
@@ -1144,8 +1153,7 @@ socket.on("team_claim_success", (key) => {
   mySelectedTeamKey = key;
   if (myRoomId) localStorage.setItem(`ipl_team_${myRoomId}`, key);
   renderLobbyTeams();
-  // 🔧 NEW: VISUAL FEEDBACK FOR TEAM RESTORE
-  logEvent("✅ Team ownership restored successfully!", true);
+  logEvent("✅ Team ownership restored.", true);
 });
 
 function buildAuctionQueue() {
@@ -1558,7 +1566,7 @@ socket.on("sale_finalized", (data) => {
 });
 
 // ======================================================
-// 🔧 UPDATED TEAM SIDEBAR (FIXED FOR MOBILE + STATS)
+// 🔧 UPDATED TEAM SIDEBAR
 // ======================================================
 function updateTeamSidebar(teams) {
   const container = document.getElementById("teams");
@@ -2110,15 +2118,35 @@ function renderSquads() {
   });
 }
 
+// 🔧 UPDATED: DOM Content Loaded with Auto-Join
 document.addEventListener("DOMContentLoaded", () => {
   setTimeout(() => {
     const introContainer = document.querySelector(".shake-container");
-    if (introContainer) {
-      introContainer.style.display = "none";
-    }
+    if (introContainer) introContainer.style.display = "none";
     const lobby = document.getElementById("lobbyScreen");
-    if (lobby) {
+    // Only show lobby if gameContainer isn't already active (auto-joined)
+    if (
+      lobby &&
+      document.getElementById("gameContainer").style.display === "none"
+    ) {
       lobby.style.display = "flex";
     }
   }, 4500);
+
+  // 🔧 AUTO-JOIN TRIGGER
+  const savedRoom = localStorage.getItem("ipl_last_room");
+  const savedPass = localStorage.getItem("ipl_last_pass");
+
+  if (savedRoom && savedPass) {
+    console.log(
+      `🔄 Found saved session for Room: ${savedRoom}. Auto-joining...`
+    );
+    if (socket.connected) {
+      socket.emit("join_room", { roomId: savedRoom, password: savedPass });
+    } else {
+      socket.once("connect", () => {
+        socket.emit("join_room", { roomId: savedRoom, password: savedPass });
+      });
+    }
+  }
 });
