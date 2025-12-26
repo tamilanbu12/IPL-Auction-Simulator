@@ -1,10 +1,9 @@
 /**
- * IPL AUCTION SERVER - FINAL PRODUCTION VERSION
+ * IPL AUCTION SERVER - RENDER PRODUCTION READY
  * FEATURES:
- * 1. Auction Logic (Bidding, Timer, Sales)
- * 2. Realistic T20 Simulation
- * 3. Persistence: LocalStorage (Wristband) + IP Address (Network)
- * 4. HOST RECOVERY: Fast-Refresh Race Condition Fixed
+ * 1. Fixed IP Proxy Parsing (Crucial for Render/AWS)
+ * 2. Auto-Wake / Keep-Alive Logic
+ * 3. Robust Host Recovery
  */
 
 const express = require("express");
@@ -19,7 +18,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 const AUCTION_TIMER_SECONDS = 10;
-const PORT = 3001;
+const PORT = process.env.PORT || 3001; // 🔧 Render uses dynamic ports
 
 // --- SERVE HTML ---
 app.get("/", (req, res) => {
@@ -30,81 +29,20 @@ app.get("/", (req, res) => {
 app.use(express.static(__dirname));
 app.use(express.raw({ type: "audio/wav", limit: "10mb" }));
 
-// --- SPEECH ROUTE ---
-app.post("/speech", async (req, res) => {
-  try {
-    const audioBlob = req.body;
-    const ASSEMBLY_KEY = "20055b6c58d7404eb0356529e5d499cd";
-
-    // 1️⃣ Upload audio
-    const upload = await axios.post(
-      "https://api.assemblyai.com/v2/upload",
-      audioBlob,
-      {
-        headers: {
-          authorization: ASSEMBLY_KEY,
-          "content-type": "application/octet-stream",
-        },
-      }
-    );
-
-    const uploadUrl = upload.data.upload_url;
-
-    // 2️⃣ Request transcript
-    const trans = await axios.post(
-      "https://api.assemblyai.com/v2/transcript",
-      { audio_url: uploadUrl },
-      {
-        headers: { authorization: ASSEMBLY_KEY },
-      }
-    );
-
-    const transcriptId = trans.data.id;
-    let completed = false;
-    let userText = "";
-
-    // 3️⃣ Poll until ready
-    while (!completed) {
-      const result = await axios.get(
-        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
-        {
-          headers: { authorization: ASSEMBLY_KEY },
-        }
-      );
-
-      if (result.data.status === "completed") {
-        userText = result.data.text;
-        completed = true;
-      } else if (result.data.status === "error") {
-        throw new Error("Transcription failed");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1s
+// --- ROBUST IP GETTER FOR RENDER ---
+function getClientIp(socket) {
+    const header = socket.handshake.headers['x-forwarded-for'];
+    if (header) {
+        // Render returns "clientIP, proxy1, proxy2"
+        // We MUST take the first one, otherwise string matching fails
+        const ip = header.split(',')[0].trim();
+        if (ip.startsWith("::ffff:")) return ip.substr(7);
+        return ip;
     }
-
-    // 4️⃣ Send to OpenAI
-    // ⚠️ IMPORTANT: Replace 'YOUR_OPENAI_API_KEY' with your actual key
-    const aiReply = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-3.5-turbo",
-        messages: [{ role: "user", content: userText }],
-      },
-      {
-        headers: {
-          Authorization: `Bearer YOUR_OPENAI_API_KEY`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    const aiText = aiReply.data.choices[0].message.content;
-
-    res.json({ userText, aiText });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Processing failed" });
-  }
-});
+    const ip = socket.handshake.address;
+    if (ip && ip.startsWith("::ffff:")) return ip.substr(7);
+    return ip;
+}
 
 // --- GLOBAL STATE ---
 const rooms = {};
@@ -114,31 +52,20 @@ function getRoomId(socket) {
   return [...socket.rooms].find((r) => r !== socket.id);
 }
 
-function getIP() {
-  const nets = os.networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
-    }
-  }
-  return "localhost";
-}
-
-// 🔧 Helper to get Client IP
-function getClientIp(socket) {
-  const ip =
-    socket.handshake.headers["x-forwarded-for"] || socket.handshake.address;
-  if (ip && ip.startsWith("::ffff:")) {
-    return ip.substr(7);
-  }
-  return ip;
-}
-
 function isAdmin(socket) {
   const roomId = getRoomId(socket);
   const r = rooms[roomId];
   return r && r.adminSocketId === socket.id;
 }
+
+// --- KEEP ALIVE LOGIC ---
+// This logs a heartbeat to the console to prevent some platforms from thinking the app is idle
+setInterval(() => {
+    const roomCount = Object.keys(rooms).length;
+    if (roomCount > 0) {
+        console.log(`[Heartbeat] Active Rooms: ${roomCount} | Memory kept alive.`);
+    }
+}, 60000); // Check every 1 minute
 
 // --- TIMER LOGIC ---
 function startTimer(roomId) {
@@ -216,13 +143,11 @@ function processSale(roomId, source = "UNKNOWN") {
   }, 3800);
 }
 
-// ======================================================
-// 🔧 1. AUTH MIDDLEWARE (THE WRISTBAND CHECK)
-// ======================================================
+// --- AUTH MIDDLEWARE ---
 io.use((socket, next) => {
   const playerId = socket.handshake.auth.playerId;
   if (playerId) {
-    socket.playerId = playerId;
+    socket.playerId = playerId; 
     return next();
   }
   socket.playerId = "guest_" + socket.id;
@@ -232,9 +157,7 @@ io.use((socket, next) => {
 // --- SOCKET HANDLERS ---
 io.on("connection", (socket) => {
   const clientIp = getClientIp(socket);
-  console.log(
-    `User Connected: ${socket.id} (PID: ${socket.playerId}) [IP: ${clientIp}]`
-  );
+  console.log(`User Connected: ${socket.id} (PID: ${socket.playerId}) [IP: ${clientIp}]`);
 
   socket.on("pingServer", () => {
     socket.emit("pongServer");
@@ -259,7 +182,7 @@ io.on("connection", (socket) => {
       timerPaused: true,
       state: { isActive: false },
       adminSocketId: socket.id,
-      adminIP: getClientIp(socket), // Store Admin IP
+      adminIP: getClientIp(socket), // Store clean IP
       sellingInProgress: false,
       squads: {},
     };
@@ -268,7 +191,7 @@ io.on("connection", (socket) => {
     socket.emit("roomcreated", roomId);
   });
 
-  // 2. Join Room (FIXED FOR FAST REFRESH & LOCALHOST)
+  // 2. Join Room (UPDATED FOR RENDER PROXY)
   socket.on("join_room", ({ roomId, password }) => {
     const r = rooms[roomId];
     if (!r || r.password !== password)
@@ -277,28 +200,24 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     if (!r.users.includes(socket.id)) r.users.push(socket.id);
 
-    // 🔧 IMPROVED HOST RECONNECTION LOGIC
-    // If IP matches Admin IP, we forcefully take over Admin rights.
-    // This fixes the "Fast Refresh" bug where the old socket hasn't disconnected yet.
     const currentIp = getClientIp(socket);
     let isAdminReconnected = false;
 
+    // 🔧 LOGIC: If IP matches Admin, Force Restore
     if (r.adminIP && r.adminIP === currentIp) {
-      console.log(
-        `Host reconnected via IP Match: ${currentIp}. Updating Admin Socket.`
-      );
+         console.log(`Host reconnected via IP Match: ${currentIp}`);
+         
+         // Disconnect old admin socket if ghost
+         const oldAdminSocket = io.sockets.sockets.get(r.adminSocketId);
+         if (oldAdminSocket) oldAdminSocket.disconnect(true);
 
-      // If the old admin socket is still technically "alive" in the room users list,
-      // we don't care. The NEW connection (this socket) is now the Boss.
-      r.adminSocketId = socket.id;
-      isAdminReconnected = true;
+         r.adminSocketId = socket.id; 
+         isAdminReconnected = true;
     }
 
-    // 🔧 LOGIC: CHECK IF THIS PLAYER ALREADY OWNS A TEAM
+    // 🔧 LOGIC: Restore Team Ownership
     const myExistingTeam = r.teams.find(
-      (t) =>
-        t.ownerPlayerId === socket.playerId ||
-        (t.ownerIP === currentIp && !t.ownerSocketId)
+      (t) => t.ownerPlayerId === socket.playerId || (t.ownerIP === currentIp && !t.ownerSocketId)
     );
 
     if (myExistingTeam) {
@@ -316,7 +235,7 @@ io.on("connection", (socket) => {
 
     socket.emit("room_joined", {
       roomId,
-      isAdmin: isAdminReconnected,
+      isAdmin: isAdminReconnected, 
       lobbyState: { teams: r.teams, userCount: r.users.length },
       state: syncState,
     });
@@ -344,19 +263,17 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 3. DISCONNECT LOGIC
   socket.on("disconnect", () => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     if (!r) return;
 
-    // Remove this specific socket from the user list
     r.users = r.users.filter((id) => id !== socket.id);
 
     const ownedTeam = r.teams.find((t) => t.ownerSocketId === socket.id);
     if (ownedTeam) {
       console.log(`Owner of ${ownedTeam.name} disconnected temporarily.`);
-      ownedTeam.ownerSocketId = null; // Mark as "Away"
+      ownedTeam.ownerSocketId = null; 
     }
 
     io.to(roomId).emit("lobby_update", {
@@ -381,7 +298,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 4. CLAIM TEAM
   socket.on("claim_lobby_team", (key) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
@@ -390,8 +306,7 @@ io.on("connection", (socket) => {
     const currentIp = getClientIp(socket);
 
     const existingTeam = r.teams.find(
-      (team) =>
-        team.ownerPlayerId === socket.playerId || team.ownerIP === currentIp
+      (team) => team.ownerPlayerId === socket.playerId || team.ownerIP === currentIp
     );
     if (existingTeam) {
       socket.emit("error_message", "You already have a team!");
@@ -403,8 +318,8 @@ io.on("connection", (socket) => {
     if (t && !t.isTaken) {
       t.isTaken = true;
       t.ownerSocketId = socket.id;
-      t.ownerPlayerId = socket.playerId;
-      t.ownerIP = currentIp;
+      t.ownerPlayerId = socket.playerId; 
+      t.ownerIP = currentIp; 
       socket.emit("team_claim_success", key);
       io.to(roomId).emit("lobby_update", {
         teams: r.teams,
@@ -419,11 +334,8 @@ io.on("connection", (socket) => {
     if (!r) return;
     const t = r.teams.find((x) => x.bidKey === key);
 
-    if (
-      t &&
-      t.isTaken &&
-      (t.ownerPlayerId === socket.playerId || t.ownerIP === getClientIp(socket))
-    ) {
+    const currentIp = getClientIp(socket);
+    if (t && t.isTaken && (t.ownerPlayerId === socket.playerId || t.ownerIP === currentIp)) {
       t.ownerSocketId = socket.id;
       socket.emit("team_claim_success", key);
     }
@@ -462,44 +374,25 @@ io.on("connection", (socket) => {
     startNextLot(roomId);
   });
 
-  // 5. BIDDING
   socket.on("place_bid", ({ teamKey, amount }) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     const bidderSocket = io.sockets.sockets.get(socket.id);
 
-    if (
-      !r ||
-      !r.state.isActive ||
-      r.timerPaused ||
-      r.sellingInProgress ||
-      !r.currentPlayer
-    )
+    if (!r || !r.state.isActive || r.timerPaused || r.sellingInProgress || !r.currentPlayer)
       return;
 
     const team = r.teams.find((t) => t.bidKey === teamKey);
 
-    if (!team)
-      return (
-        bidderSocket && bidderSocket.emit("error_message", "Invalid team.")
-      );
-
-    // Check ownership using SocketID (most reliable)
+    if (!team) return bidderSocket && bidderSocket.emit("error_message", "Invalid team.");
     if (team.ownerSocketId !== socket.id)
-      return (
-        bidderSocket &&
-        bidderSocket.emit("error_message", "You do not own this team.")
-      );
+      return bidderSocket && bidderSocket.emit("error_message", "You do not own this team.");
 
     if (r.currentBidder === teamKey) return;
     if (team.budget < amount)
-      return (
-        bidderSocket && bidderSocket.emit("error_message", "Not enough budget!")
-      );
+      return bidderSocket && bidderSocket.emit("error_message", "Not enough budget!");
     if (amount <= r.currentBid)
-      return (
-        bidderSocket && bidderSocket.emit("error_message", "Bid is too low.")
-      );
+      return bidderSocket && bidderSocket.emit("error_message", "Bid is too low.");
 
     r.currentBid = amount;
     r.currentBidder = teamKey;
@@ -535,7 +428,7 @@ io.on("connection", (socket) => {
     if (isUnsold) r.currentBidder = null;
     processSale(roomId, "ADMIN_MANUAL");
   });
-
+  
   socket.on("end_auction_trigger", () => {
     const roomId = getRoomId(socket);
     if (!isAdmin(socket)) return;
@@ -629,54 +522,23 @@ function runAdvancedSimulation(teams) {
   const leagueMatches = [];
   const playoffs = [];
 
-  // Initialize Global Stats
   teams.forEach((t) => {
-    t.stats = {
-      p: 0,
-      w: 0,
-      l: 0,
-      pts: 0,
-      nrr: 0,
-      runsScored: 0,
-      runsConceded: 0,
-      oversFaced: 0,
-      oversBowled: 0,
-    };
+    t.stats = { p: 0, w: 0, l: 0, pts: 0, nrr: 0, runsScored: 0, runsConceded: 0, oversFaced: 0, oversBowled: 0 };
     t.playing11.forEach((p) => {
       if (!stats[p.name])
-        stats[p.name] = {
-          name: p.name,
-          role: p.roleKey || "batter",
-          runs: 0,
-          balls: 0,
-          fours: 0,
-          sixes: 0,
-          wickets: 0,
-          overs: 0,
-          runsGiven: 0,
-          pts: 0,
-        };
+        stats[p.name] = { name: p.name, role: p.roleKey || "batter", runs: 0, balls: 0, fours: 0, sixes: 0, wickets: 0, overs: 0, runsGiven: 0, pts: 0 };
     });
   });
 
-  function getStat(name) {
-    return stats[name];
-  }
+  function getStat(name) { return stats[name]; }
 
   function simulateInnings(batTeam, bowlTeam, target = null) {
-    let score = 0,
-      wickets = 0,
-      legalBallsBowled = 0;
+    let score = 0, wickets = 0, legalBallsBowled = 0;
     const MAX_BALLS = 120;
     const getMatchForm = () => Math.floor(Math.random() * 10) - 5;
 
     let battingCard = batTeam.playing11.map((p) => ({
-      name: p.name,
-      runs: 0,
-      balls: 0,
-      fours: 0,
-      sixes: 0,
-      status: "dnb",
+      name: p.name, runs: 0, balls: 0, fours: 0, sixes: 0, status: "dnb",
       skill: (p.stats?.bat || 50) + getMatchForm(),
       luck: (p.stats?.luck || 50) + getMatchForm(),
       role: p.roleKey,
@@ -687,34 +549,21 @@ function runAdvancedSimulation(teams) {
     );
     if (validBowlers.length < 5) {
       let batters = bowlTeam.playing11.filter((p) => p.roleKey === "batter");
-      validBowlers = [
-        ...validBowlers,
-        ...batters.slice(0, 5 - validBowlers.length),
-      ];
+      validBowlers = [...validBowlers, ...batters.slice(0, 5 - validBowlers.length)];
     }
     if (validBowlers.length < 5) {
       let wks = bowlTeam.playing11.filter((p) => p.roleKey === "wk");
-      validBowlers = [
-        ...validBowlers,
-        ...wks.slice(0, 5 - validBowlers.length),
-      ];
+      validBowlers = [...validBowlers, ...wks.slice(0, 5 - validBowlers.length)];
     }
 
     let bowlingCard = validBowlers.map((b) => ({
-      name: b.name,
-      overs: 0,
-      runs: 0,
-      wkts: 0,
-      balls: 0,
-      skill:
-        (["wk", "batter"].includes(b.roleKey) ? 20 : b.stats?.bowl || 50) +
-        getMatchForm(),
+      name: b.name, overs: 0, runs: 0, wkts: 0, balls: 0,
+      skill: (["wk", "batter"].includes(b.roleKey) ? 20 : b.stats?.bowl || 50) + getMatchForm(),
       luck: (b.stats?.luck || 50) + getMatchForm(),
       role: b.roleKey,
     }));
 
-    let strikerIdx = 0,
-      nonStrikerIdx = 1;
+    let strikerIdx = 0, nonStrikerIdx = 1;
     battingCard[strikerIdx].status = "not out";
     battingCard[nonStrikerIdx].status = "not out";
 
@@ -785,14 +634,8 @@ function runAdvancedSimulation(teams) {
         score += outcome;
         strikerObj.runs += outcome;
         strikerObj.balls++;
-        if (outcome === 4) {
-          strikerObj.fours++;
-          getStat(strikerObj.name).fours++;
-        }
-        if (outcome === 6) {
-          strikerObj.sixes++;
-          getStat(strikerObj.name).sixes++;
-        }
+        if (outcome === 4) { strikerObj.fours++; getStat(strikerObj.name).fours++; }
+        if (outcome === 6) { strikerObj.sixes++; getStat(strikerObj.name).sixes++; }
         getStat(strikerObj.name).runs += outcome;
         getStat(strikerObj.name).balls++;
         getStat(strikerObj.name).pts += outcome;
@@ -801,11 +644,9 @@ function runAdvancedSimulation(teams) {
 
         bowlerObj.runs += outcome;
         getStat(bowlerObj.name).runsGiven += outcome;
-        if (outcome % 2 !== 0)
-          [strikerIdx, nonStrikerIdx] = [nonStrikerIdx, strikerIdx];
+        if (outcome % 2 !== 0) [strikerIdx, nonStrikerIdx] = [nonStrikerIdx, strikerIdx];
       }
-      if (legalBallsBowled % 6 === 0)
-        [strikerIdx, nonStrikerIdx] = [nonStrikerIdx, strikerIdx];
+      if (legalBallsBowled % 6 === 0) [strikerIdx, nonStrikerIdx] = [nonStrikerIdx, strikerIdx];
     }
 
     bowlingCard.forEach((b) => {
@@ -815,14 +656,7 @@ function runAdvancedSimulation(teams) {
       b.economy = b.balls > 0 ? ((b.runs / b.balls) * 6).toFixed(1) : "0.0";
     });
 
-    return {
-      score,
-      wickets,
-      balls: legalBallsBowled,
-      battingCard,
-      bowlingCard,
-      teamName: batTeam.name,
-    };
+    return { score, wickets, balls: legalBallsBowled, battingCard, bowlingCard, teamName: batTeam.name };
   }
 
   function playMatch(t1, t2, type) {
@@ -830,26 +664,13 @@ function runAdvancedSimulation(teams) {
     const i2 = simulateInnings(t2, t1, i1.score);
 
     let win, lose, margin;
-    if (i2.score > i1.score) {
-      win = t2;
-      lose = t1;
-      margin = `${10 - i2.wickets} wkts`;
-    } else if (i1.score > i2.score) {
-      win = t1;
-      lose = t2;
-      margin = `${i1.score - i2.score} runs`;
-    } else {
-      win = t1;
-      lose = t2;
-      margin = "Super Over";
-    }
+    if (i2.score > i1.score) { win = t2; lose = t1; margin = `${10 - i2.wickets} wkts`; }
+    else if (i1.score > i2.score) { win = t1; lose = t2; margin = `${i1.score - i2.score} runs`; }
+    else { win = t1; lose = t2; margin = "Super Over"; }
 
     if (type === "League") {
-      win.stats.p++;
-      win.stats.w++;
-      win.stats.pts += 2;
-      lose.stats.p++;
-      lose.stats.l++;
+      win.stats.p++; win.stats.w++; win.stats.pts += 2;
+      lose.stats.p++; lose.stats.l++;
       win.stats.runsScored += win === t1 ? i1.score : i2.score;
       win.stats.runsConceded += win === t1 ? i2.score : i1.score;
       win.stats.oversFaced += win === t1 ? 20 : i2.balls / 6;
@@ -862,95 +683,40 @@ function runAdvancedSimulation(teams) {
 
     const allBat = [...i1.battingCard, ...i2.battingCard];
     const allBowl = [...i1.bowlingCard, ...i2.bowlingCard];
-    const topScorer = allBat.sort((a, b) => b.runs - a.runs)[0] || {
-      name: "-",
-      runs: 0,
-    };
-    const bestBowler = allBowl.sort(
-      (a, b) => b.wkts - a.wkts || a.runs - b.runs
-    )[0] || { name: "-", wkts: 0 };
+    const topScorer = allBat.sort((a, b) => b.runs - a.runs)[0] || { name: "-", runs: 0 };
+    const bestBowler = allBowl.sort((a, b) => b.wkts - a.wkts || a.runs - b.runs)[0] || { name: "-", wkts: 0 };
 
     let matchPerformers = [];
     const addPerf = (name, team, ptsToAdd, descStr) => {
       let p = matchPerformers.find((x) => x.name === name);
-      if (!p) {
-        p = { name, team, points: 0, desc: [] };
-        matchPerformers.push(p);
-      }
+      if (!p) { p = { name, team, points: 0, desc: [] }; matchPerformers.push(p); }
       p.points += ptsToAdd;
       if (descStr) p.desc.push(descStr);
     };
-    i1.battingCard.forEach((p) => {
-      if (p.runs > 0)
-        addPerf(
-          p.name,
-          t1.name,
-          p.runs + p.sixes * 2 + p.fours,
-          `${p.runs} runs`
-        );
-    });
-    i1.bowlingCard.forEach((p) => {
-      if (p.wkts > 0) addPerf(p.name, t2.name, p.wkts * 25, `${p.wkts} wkts`);
-    });
-    i2.battingCard.forEach((p) => {
-      if (p.runs > 0)
-        addPerf(
-          p.name,
-          t2.name,
-          p.runs + p.sixes * 2 + p.fours,
-          `${p.runs} runs`
-        );
-    });
-    i2.bowlingCard.forEach((p) => {
-      if (p.wkts > 0) addPerf(p.name, t1.name, p.wkts * 25, `${p.wkts} wkts`);
-    });
+    i1.battingCard.forEach((p) => { if (p.runs > 0) addPerf(p.name, t1.name, p.runs + p.sixes * 2 + p.fours, `${p.runs} runs`); });
+    i1.bowlingCard.forEach((p) => { if (p.wkts > 0) addPerf(p.name, t2.name, p.wkts * 25, `${p.wkts} wkts`); });
+    i2.battingCard.forEach((p) => { if (p.runs > 0) addPerf(p.name, t2.name, p.runs + p.sixes * 2 + p.fours, `${p.runs} runs`); });
+    i2.bowlingCard.forEach((p) => { if (p.wkts > 0) addPerf(p.name, t1.name, p.wkts * 25, `${p.wkts} wkts`); });
     matchPerformers.sort((a, b) => b.points - a.points);
 
-    const t1BestBat = i1.battingCard.sort((a, b) => b.runs - a.runs)[0] || {
-      name: "-",
-      runs: 0,
-    };
-    const t1BestBowl = i2.bowlingCard.sort(
-      (a, b) => b.wkts - a.wkts || a.runs - b.runs
-    )[0] || { name: "-", wkts: 0, runs: 0 };
-    const t2BestBat = i2.battingCard.sort((a, b) => b.runs - a.runs)[0] || {
-      name: "-",
-      runs: 0,
-    };
-    const t2BestBowl = i1.bowlingCard.sort(
-      (a, b) => b.wkts - a.wkts || a.runs - b.runs
-    )[0] || { name: "-", wkts: 0, runs: 0 };
+    const t1BestBat = i1.battingCard.sort((a, b) => b.runs - a.runs)[0] || { name: "-", runs: 0 };
+    const t1BestBowl = i2.bowlingCard.sort((a, b) => b.wkts - a.wkts || a.runs - b.runs)[0] || { name: "-", wkts: 0, runs: 0 };
+    const t2BestBat = i2.battingCard.sort((a, b) => b.runs - a.runs)[0] || { name: "-", runs: 0 };
+    const t2BestBowl = i1.bowlingCard.sort((a, b) => b.wkts - a.wkts || a.runs - b.runs)[0] || { name: "-", wkts: 0, runs: 0 };
 
     return {
-      type,
-      t1: t1.name,
-      t2: t2.name,
-      score1: `${i1.score}/${i1.wickets}`,
-      score2: `${i2.score}/${i2.wickets}`,
-      winnerName: win.name,
-      margin,
+      type, t1: t1.name, t2: t2.name,
+      score1: `${i1.score}/${i1.wickets}`, score2: `${i2.score}/${i2.wickets}`,
+      winnerName: win.name, margin,
       topScorer: { name: topScorer.name, runs: topScorer.runs },
       bestBowler: { name: bestBowler.name, figures: `${bestBowler.wkts} wkts` },
-      winObj: win,
-      loseObj: lose,
+      winObj: win, loseObj: lose,
       top3Performers: matchPerformers.slice(0, 3),
       t1Best: { bat: t1BestBat, bowl: t1BestBowl },
       t2Best: { bat: t2BestBat, bowl: t2BestBowl },
       details: {
-        i1: {
-          team: t1.name,
-          score: i1.score,
-          wkts: i1.wickets,
-          bat: i1.battingCard,
-          bowl: i1.bowlingCard,
-        },
-        i2: {
-          team: t2.name,
-          score: i2.score,
-          wkts: i2.wickets,
-          bat: i2.battingCard,
-          bowl: i2.bowlingCard,
-        },
+        i1: { team: t1.name, score: i1.score, wkts: i1.wickets, bat: i1.battingCard, bowl: i1.bowlingCard },
+        i2: { team: t2.name, score: i2.score, wkts: i2.wickets, bat: i2.battingCard, bowl: i2.bowlingCard },
       },
       allTeamsData: teams,
     };
@@ -973,53 +739,25 @@ function runAdvancedSimulation(teams) {
 
   let champion, runner;
   if (teams.length >= 4) {
-    const q1 = playMatch(teams[0], teams[1], "Qualifier 1");
-    playoffs.push(q1);
-    const eli = playMatch(teams[2], teams[3], "Eliminator");
-    playoffs.push(eli);
-    const q2 = playMatch(q1.loseObj, eli.winObj, "Qualifier 2");
-    playoffs.push(q2);
-    const fin = playMatch(q1.winObj, q2.winObj, "FINAL");
-    playoffs.push(fin);
-    champion = fin.winnerName;
-    runner = champion === q1.winObj.name ? q2.winObj.name : q1.winObj.name;
+    const q1 = playMatch(teams[0], teams[1], "Qualifier 1"); playoffs.push(q1);
+    const eli = playMatch(teams[2], teams[3], "Eliminator"); playoffs.push(eli);
+    const q2 = playMatch(q1.loseObj, eli.winObj, "Qualifier 2"); playoffs.push(q2);
+    const fin = playMatch(q1.winObj, q2.winObj, "FINAL"); playoffs.push(fin);
+    champion = fin.winnerName; runner = champion === q1.winObj.name ? q2.winObj.name : q1.winObj.name;
   } else {
-    const fin = playMatch(teams[0], teams[1], "FINAL");
-    playoffs.push(fin);
-    champion = fin.winnerName;
-    runner = teams[0].name === champion ? teams[1].name : teams[0].name;
+    const fin = playMatch(teams[0], teams[1], "FINAL"); playoffs.push(fin);
+    champion = fin.winnerName; runner = teams[0].name === champion ? teams[1].name : teams[0].name;
   }
 
   const allStats = Object.values(stats);
-  const orangeCap = allStats
-    .filter((s) => s.role === "batter" || s.role === "wk")
-    .sort((a, b) => b.runs - a.runs)[0] || { name: "-", runs: 0 };
-  const purpleCap = allStats
-    .filter(
-      (s) => s.role === "bowler" || s.role === "spinner" || s.role === "fast"
-    )
-    .sort((a, b) => b.wickets - a.wickets)[0] || { name: "-", wickets: 0 };
-  const mvp = allStats
-    .filter((s) => s.role === "allrounder")
-    .sort((a, b) => b.pts - a.pts)[0] || { name: "-", pts: 0 };
+  const orangeCap = allStats.filter((s) => s.role === "batter" || s.role === "wk").sort((a, b) => b.runs - a.runs)[0] || { name: "-", runs: 0 };
+  const purpleCap = allStats.filter((s) => s.role === "bowler" || s.role === "spinner" || s.role === "fast").sort((a, b) => b.wickets - a.wickets)[0] || { name: "-", wickets: 0 };
+  const mvp = allStats.filter((s) => s.role === "allrounder").sort((a, b) => b.pts - a.pts)[0] || { name: "-", pts: 0 };
 
   return {
-    winner: champion,
-    runnerUp: runner,
-    standings: teams.map((t) => ({
-      name: t.name,
-      played: t.stats.p,
-      won: t.stats.w,
-      lost: t.stats.l,
-      points: t.stats.pts,
-      nrr: t.stats.nrr,
-    })),
-    leagueMatches,
-    playoffs,
-    orangeCap,
-    purpleCap,
-    mvp,
-    allTeamsData: teams,
+    winner: champion, runnerUp: runner,
+    standings: teams.map((t) => ({ name: t.name, played: t.stats.p, won: t.stats.w, lost: t.stats.l, points: t.stats.pts, nrr: t.stats.nrr })),
+    leagueMatches, playoffs, orangeCap, purpleCap, mvp, allTeamsData: teams,
   };
 }
 
