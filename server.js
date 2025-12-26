@@ -1,10 +1,10 @@
 /**
- * IPL AUCTION SERVER
+ * IPL AUCTION SERVER - FINAL PRODUCTION VERSION
  * FEATURES:
  * 1. Auction Logic (Bidding, Timer, Sales)
- * 2. Realistic T20 Simulation (Stats + Match Form + Luck)
- * 3. Role-Based Engine (WKs don't bowl, Realistic Scores)
- * 4. Security: Enforces Single Team Selection
+ * 2. Realistic T20 Simulation
+ * 3. Persistence: LocalStorage (Wristband) + IP Address (Network)
+ * 4. HOST RECOVERY: Fast-Refresh Race Condition Fixed
  */
 
 const express = require("express");
@@ -124,6 +124,16 @@ function getIP() {
   return "localhost";
 }
 
+// 🔧 Helper to get Client IP
+function getClientIp(socket) {
+  const ip =
+    socket.handshake.headers["x-forwarded-for"] || socket.handshake.address;
+  if (ip && ip.startsWith("::ffff:")) {
+    return ip.substr(7);
+  }
+  return ip;
+}
+
 function isAdmin(socket) {
   const roomId = getRoomId(socket);
   const r = rooms[roomId];
@@ -206,9 +216,26 @@ function processSale(roomId, source = "UNKNOWN") {
   }, 3800);
 }
 
+// ======================================================
+// 🔧 1. AUTH MIDDLEWARE (THE WRISTBAND CHECK)
+// ======================================================
+io.use((socket, next) => {
+  const playerId = socket.handshake.auth.playerId;
+  if (playerId) {
+    socket.playerId = playerId;
+    return next();
+  }
+  socket.playerId = "guest_" + socket.id;
+  next();
+});
+
 // --- SOCKET HANDLERS ---
 io.on("connection", (socket) => {
-  // 🔧 CHANGE: ADDED PING LISTENER FOR HEARTBEAT
+  const clientIp = getClientIp(socket);
+  console.log(
+    `User Connected: ${socket.id} (PID: ${socket.playerId}) [IP: ${clientIp}]`
+  );
+
   socket.on("pingServer", () => {
     socket.emit("pongServer");
   });
@@ -232,6 +259,7 @@ io.on("connection", (socket) => {
       timerPaused: true,
       state: { isActive: false },
       adminSocketId: socket.id,
+      adminIP: getClientIp(socket), // Store Admin IP
       sellingInProgress: false,
       squads: {},
     };
@@ -240,7 +268,7 @@ io.on("connection", (socket) => {
     socket.emit("roomcreated", roomId);
   });
 
-  // 2. Join Room
+  // 2. Join Room (FIXED FOR FAST REFRESH & LOCALHOST)
   socket.on("join_room", ({ roomId, password }) => {
     const r = rooms[roomId];
     if (!r || r.password !== password)
@@ -248,6 +276,36 @@ io.on("connection", (socket) => {
 
     socket.join(roomId);
     if (!r.users.includes(socket.id)) r.users.push(socket.id);
+
+    // 🔧 IMPROVED HOST RECONNECTION LOGIC
+    // If IP matches Admin IP, we forcefully take over Admin rights.
+    // This fixes the "Fast Refresh" bug where the old socket hasn't disconnected yet.
+    const currentIp = getClientIp(socket);
+    let isAdminReconnected = false;
+
+    if (r.adminIP && r.adminIP === currentIp) {
+      console.log(
+        `Host reconnected via IP Match: ${currentIp}. Updating Admin Socket.`
+      );
+
+      // If the old admin socket is still technically "alive" in the room users list,
+      // we don't care. The NEW connection (this socket) is now the Boss.
+      r.adminSocketId = socket.id;
+      isAdminReconnected = true;
+    }
+
+    // 🔧 LOGIC: CHECK IF THIS PLAYER ALREADY OWNS A TEAM
+    const myExistingTeam = r.teams.find(
+      (t) =>
+        t.ownerPlayerId === socket.playerId ||
+        (t.ownerIP === currentIp && !t.ownerSocketId)
+    );
+
+    if (myExistingTeam) {
+      console.log(`Player returned. Reconnecting to ${myExistingTeam.name}`);
+      myExistingTeam.ownerSocketId = socket.id;
+      socket.emit("team_claim_success", myExistingTeam.bidKey);
+    }
 
     const syncState = {
       isActive: r.state.isActive,
@@ -258,7 +316,7 @@ io.on("connection", (socket) => {
 
     socket.emit("room_joined", {
       roomId,
-      isAdmin: false,
+      isAdmin: isAdminReconnected,
       lobbyState: { teams: r.teams, userCount: r.users.length },
       state: syncState,
     });
@@ -286,17 +344,19 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 3. DISCONNECT LOGIC
   socket.on("disconnect", () => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     if (!r) return;
 
+    // Remove this specific socket from the user list
     r.users = r.users.filter((id) => id !== socket.id);
 
     const ownedTeam = r.teams.find((t) => t.ownerSocketId === socket.id);
     if (ownedTeam) {
-      ownedTeam.isTaken = false;
-      ownedTeam.ownerSocketId = null;
+      console.log(`Owner of ${ownedTeam.name} disconnected temporarily.`);
+      ownedTeam.ownerSocketId = null; // Mark as "Away"
     }
 
     io.to(roomId).emit("lobby_update", {
@@ -310,7 +370,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 3. Lobby & Reclaim
   socket.on("update_lobby_teams", (teams) => {
     const roomId = getRoomId(socket);
     if (roomId && rooms[roomId]) {
@@ -322,13 +381,17 @@ io.on("connection", (socket) => {
     }
   });
 
+  // 4. CLAIM TEAM
   socket.on("claim_lobby_team", (key) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     if (!r) return;
 
+    const currentIp = getClientIp(socket);
+
     const existingTeam = r.teams.find(
-      (team) => team.ownerSocketId === socket.id
+      (team) =>
+        team.ownerPlayerId === socket.playerId || team.ownerIP === currentIp
     );
     if (existingTeam) {
       socket.emit("error_message", "You already have a team!");
@@ -340,6 +403,8 @@ io.on("connection", (socket) => {
     if (t && !t.isTaken) {
       t.isTaken = true;
       t.ownerSocketId = socket.id;
+      t.ownerPlayerId = socket.playerId;
+      t.ownerIP = currentIp;
       socket.emit("team_claim_success", key);
       io.to(roomId).emit("lobby_update", {
         teams: r.teams,
@@ -353,7 +418,12 @@ io.on("connection", (socket) => {
     const r = rooms[roomId];
     if (!r) return;
     const t = r.teams.find((x) => x.bidKey === key);
-    if (t && t.isTaken) {
+
+    if (
+      t &&
+      t.isTaken &&
+      (t.ownerPlayerId === socket.playerId || t.ownerIP === getClientIp(socket))
+    ) {
       t.ownerSocketId = socket.id;
       socket.emit("team_claim_success", key);
     }
@@ -370,7 +440,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // 4. Start Auction
   socket.on("start_auction", ({ teams, queue }) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
@@ -414,16 +483,18 @@ io.on("connection", (socket) => {
       return (
         bidderSocket && bidderSocket.emit("error_message", "Invalid team.")
       );
+
+    // Check ownership using SocketID (most reliable)
     if (team.ownerSocketId !== socket.id)
       return (
         bidderSocket &&
         bidderSocket.emit("error_message", "You do not own this team.")
       );
+
     if (r.currentBidder === teamKey) return;
     if (team.budget < amount)
       return (
-        bidderSocket &&
-        bidderSocket.emit("error_message", "Not enough budget for this bid!")
+        bidderSocket && bidderSocket.emit("error_message", "Not enough budget!")
       );
     if (amount <= r.currentBid)
       return (
@@ -457,7 +528,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 6. Sale Logic
   socket.on("finalize_sale", ({ isUnsold, soldTo, price }) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
@@ -465,6 +535,7 @@ io.on("connection", (socket) => {
     if (isUnsold) r.currentBidder = null;
     processSale(roomId, "ADMIN_MANUAL");
   });
+
   socket.on("end_auction_trigger", () => {
     const roomId = getRoomId(socket);
     if (!isAdmin(socket)) return;
@@ -474,7 +545,6 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("open_squad_selection");
   });
 
-  // 7. Simulation
   socket.on("submit_squad", ({ teamKey, playing11, impact, captain }) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
@@ -551,7 +621,7 @@ function startNextLot(roomId) {
 }
 
 // ==========================================
-// REALISTIC T20 AI ENGINE (Fixed Scores & Role Checks)
+// REALISTIC T20 AI ENGINE
 // ==========================================
 
 function runAdvancedSimulation(teams) {
@@ -593,13 +663,11 @@ function runAdvancedSimulation(teams) {
     return stats[name];
   }
 
-  // --- SIMULATE INNINGS (REALISM FIX) ---
   function simulateInnings(batTeam, bowlTeam, target = null) {
-    let score = 0;
-    let wickets = 0;
-    let legalBallsBowled = 0;
+    let score = 0,
+      wickets = 0,
+      legalBallsBowled = 0;
     const MAX_BALLS = 120;
-
     const getMatchForm = () => Math.floor(Math.random() * 10) - 5;
 
     let battingCard = batTeam.playing11.map((p) => ({
@@ -617,7 +685,6 @@ function runAdvancedSimulation(teams) {
     let validBowlers = bowlTeam.playing11.filter((p) =>
       ["bowler", "allrounder", "spinner", "fast"].includes(p.roleKey)
     );
-
     if (validBowlers.length < 5) {
       let batters = bowlTeam.playing11.filter((p) => p.roleKey === "batter");
       validBowlers = [
@@ -625,7 +692,6 @@ function runAdvancedSimulation(teams) {
         ...batters.slice(0, 5 - validBowlers.length),
       ];
     }
-
     if (validBowlers.length < 5) {
       let wks = bowlTeam.playing11.filter((p) => p.roleKey === "wk");
       validBowlers = [
@@ -661,14 +727,10 @@ function runAdvancedSimulation(teams) {
 
       let batVal = strikerObj.skill;
       let bowlVal = bowlerObj.skill;
-
-      if (["wk", "batter"].includes(bowlerObj.role)) {
-        batVal += 15;
-      }
+      if (["wk", "batter"].includes(bowlerObj.role)) batVal += 15;
 
       let luckDiff = strikerObj.luck - bowlerObj.luck;
       let ballLuck = Math.random();
-
       let diff = batVal - bowlVal + luckDiff * 0.15;
       let outcome = 0;
 
@@ -739,7 +801,6 @@ function runAdvancedSimulation(teams) {
 
         bowlerObj.runs += outcome;
         getStat(bowlerObj.name).runsGiven += outcome;
-
         if (outcome % 2 !== 0)
           [strikerIdx, nonStrikerIdx] = [nonStrikerIdx, strikerIdx];
       }
