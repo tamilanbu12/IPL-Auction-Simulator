@@ -6,61 +6,517 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>IPL Mega Auction 2025 | Multiplayer</title>
     <link
-        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Teko:wght@300;400;600;700&display=swap"
+        href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;700;900&family=Teko:wght@400;600;700&display=swap"
         rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.1/font/bootstrap-icons.min.css">
 
     <link rel="stylesheet" href="style.css">
+
+    <style>
+        /* =========================================
+           NEW CINEMATIC INTRO STYLES
+           ========================================= */
+        #introOverlay {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+            background: radial-gradient(circle at center, #1a2342 0%, #050508 100%);
+            animation: overlayFadeOut 1s ease-out 4.5s forwards;
+        }
+
+        /* MOVING SPOTLIGHTS BACKGROUND */
+        .spotlight-bg {
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background:
+                conic-gradient(from 0deg at 50% 50%, transparent 0deg, rgba(255, 255, 255, 0.03) 20deg, transparent 40deg),
+                conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgba(255, 255, 255, 0.03) 20deg, transparent 40deg);
+            animation: rotateSpotlights 10s linear infinite;
+            pointer-events: none;
+            z-index: 1;
+        }
+
+        .intro-content {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            perspective: 800px;
+        }
+
+        /* TEXT STYLING - METALLIC LOOK */
+        .broken-text {
+            font-family: 'Teko', sans-serif;
+            font-size: clamp(3rem, 15vw, 7rem);
+            /* Responsive font size */
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            position: relative;
+            display: flex;
+            gap: 5px;
+        }
+
+        .broken-text span {
+            display: inline-block;
+            background: linear-gradient(to bottom, #fff 0%, #ffd700 50%, #b8860b 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            filter: drop-shadow(0 0 10px rgba(255, 215, 0, 0.5));
+            animation: textFlickerEntry 1s ease-out forwards, shatterBlast 1s cubic-bezier(0.165, 0.84, 0.44, 1) 1.4s forwards;
+            opacity: 0;
+            /* Hidden initially */
+        }
+
+        /* 3D GAVEL ANIMATION */
+        .gavel-wrapper {
+            position: absolute;
+            top: -300px;
+            /* Start high */
+            left: 50%;
+            width: 300px;
+            height: 300px;
+            transform-origin: bottom right;
+            filter: drop-shadow(10px 10px 20px rgba(0, 0, 0, 0.8));
+            opacity: 0;
+            z-index: 20;
+            animation: hammerSmashSequence 1.5s ease-out 0.2s forwards;
+        }
+
+        /* SHOCKWAVE RING */
+        .shockwave {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(0);
+            width: 100px;
+            height: 100px;
+            border: 5px solid rgba(255, 215, 0, 0.8);
+            border-radius: 50%;
+            box-shadow: 0 0 50px rgba(255, 215, 0, 0.5);
+            opacity: 0;
+            z-index: 5;
+            animation: shockwaveRipple 0.8s ease-out 1.4s forwards;
+        }
+
+        /* SOLD STAMP */
+        .sold-stamp {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scale(5);
+            font-family: 'Rajdhani', sans-serif;
+            font-size: clamp(4rem, 20vw, 10rem);
+            font-weight: 900;
+            color: #33ff41;
+            border: 8px solid #33ff41;
+            padding: 10px 40px;
+            border-radius: 15px;
+            text-shadow: 0 0 30px rgba(0, 255, 0, 0.8);
+            box-shadow: 0 0 50px rgba(30, 255, 0, 0.5), inset 0 0 20px rgba(35, 197, 10, 0.5);
+            opacity: 0;
+            z-index: 30;
+            background: rgba(0, 0, 0, 0.3);
+            mask-image: url('https://s3-us-west-2.amazonaws.com/s.cdpn.io/8399/grunge.png');
+            /* Grunge texture mask */
+            -webkit-mask-image: url('https://s3-us-west-2.amazonaws.com/s.cdpn.io/8399/grunge.png');
+            mask-size: 400px;
+            animation: stampSlam 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) 2.2s forwards;
+        }
+
+        /* SPARKS PARTICLES */
+        .spark {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: #FFD700;
+            border-radius: 50%;
+            pointer-events: none;
+            top: 50%;
+            left: 50%;
+            opacity: 0;
+            z-index: 15;
+        }
+
+        /* =========================================
+           KEYFRAMES
+           ========================================= */
+
+        @keyframes rotateSpotlights {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes textFlickerEntry {
+            0% {
+                opacity: 0;
+                transform: scale(0.9);
+                filter: blur(10px);
+            }
+
+            20% {
+                opacity: 0.5;
+            }
+
+            40% {
+                opacity: 0.1;
+            }
+
+            60% {
+                opacity: 1;
+                transform: scale(1.05);
+                filter: blur(0);
+            }
+
+            80% {
+                opacity: 0.8;
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        @keyframes hammerSmashSequence {
+            0% {
+                opacity: 0;
+                transform: translateX(-50%) translateY(-100%) rotate(-60deg) scale(1.5);
+            }
+
+            20% {
+                opacity: 1;
+            }
+
+            60% {
+                /* Raise High */
+                transform: translateX(-50%) translateY(-80%) rotate(-60deg) scale(1.5);
+            }
+
+            75% {
+                /* The Hit Point (aligned with text break at 1.4s) */
+                transform: translateX(-50%) translateY(0%) rotate(0deg) scale(1);
+            }
+
+            85% {
+                /* Recoil */
+                transform: translateX(-50%) translateY(-10%) rotate(-5deg) scale(1);
+            }
+
+            100% {
+                transform: translateX(-50%) translateY(0%) rotate(0deg) scale(1);
+                opacity: 0;
+                /* Fade out after hit */
+            }
+        }
+
+        @keyframes shatterBlast {
+            0% {
+                transform: translate(0, 0) rotate(0);
+                opacity: 1;
+            }
+
+            10% {
+                transform: scale(1.1);
+                color: #fff;
+                text-shadow: 0 0 50px white;
+            }
+
+            /* Flash white */
+            100% {
+                transform: translate(var(--tx), var(--ty)) rotate(var(--r));
+                opacity: 0;
+            }
+        }
+
+        @keyframes shockwaveRipple {
+            0% {
+                transform: translate(-50%, -50%) scale(0);
+                opacity: 0.8;
+                border-width: 10px;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(10);
+                opacity: 0;
+                border-width: 0px;
+            }
+        }
+
+        @keyframes stampSlam {
+            0% {
+                transform: translate(-50%, -50%) scale(5) rotate(-15deg);
+                opacity: 0;
+            }
+
+            70% {
+                transform: translate(-50%, -50%) scale(0.9) rotate(-2deg);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-50%, -50%) scale(1) rotate(-5deg);
+                opacity: 1;
+            }
+        }
+
+        @keyframes sparkFly {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(var(--sx), var(--sy)) scale(0);
+                opacity: 0;
+            }
+        }
+
+        @keyframes screenShake {
+
+            0%,
+            100% {
+                transform: translate(0, 0);
+            }
+
+            10%,
+            30%,
+            50%,
+            70%,
+            90% {
+                transform: translate(-10px, -10px);
+            }
+
+            20%,
+            40%,
+            60%,
+            80% {
+                transform: translate(10px, 10px);
+            }
+        }
+
+        @keyframes overlayFadeOut {
+            to {
+                opacity: 0;
+                visibility: hidden;
+                pointer-events: none;
+            }
+        }
+
+        .shake-active {
+            animation: screenShake 0.5s ease-in-out;
+        }
+
+        /* =========================================
+           ENHANCED ABOUT SECTION STYLES
+           ========================================= */
+        .workflow-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            padding: 10px;
+        }
+
+        .workflow-card {
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(20, 20, 30, 0.6) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 30px 25px;
+            position: relative;
+            overflow: hidden;
+            backdrop-filter: blur(10px);
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-start;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .workflow-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(255, 215, 0, 0.4);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 15px rgba(255, 215, 0, 0.1);
+            background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(30, 30, 45, 0.8) 100%);
+        }
+
+        /* Watermark Background Number */
+        .card-bg-number {
+            position: absolute;
+            top: -15px;
+            right: -10px;
+            font-family: 'Teko', sans-serif;
+            font-size: 8rem;
+            font-weight: 700;
+            color: rgba(255, 255, 255, 0.02);
+            line-height: 1;
+            z-index: 0;
+            transition: 0.4s;
+            pointer-events: none;
+        }
+
+        .workflow-card:hover .card-bg-number {
+            color: rgba(255, 215, 0, 0.05);
+            transform: scale(1.1) rotate(-5deg);
+        }
+
+        /* Icon Wrapper */
+        .card-icon-box {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            margin-bottom: 20px;
+            z-index: 1;
+            position: relative;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: 0.4s;
+        }
+
+        .workflow-card:hover .card-icon-box {
+            transform: scale(1.1);
+            box-shadow: 0 0 25px currentColor;
+            border-color: transparent;
+        }
+
+        /* Content Styling */
+        .card-title {
+            font-family: 'Rajdhani', sans-serif;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #fff;
+            margin-bottom: 10px;
+            z-index: 1;
+            font-size: 1.5rem;
+        }
+
+        .card-desc {
+            font-size: 0.95rem;
+            color: #a0a0b0;
+            line-height: 1.6;
+            z-index: 1;
+            margin: 0;
+        }
+
+        /* Special Highlight Card */
+        .workflow-card.highlight-card {
+            grid-column: 1 / -1;
+            background: linear-gradient(90deg, rgba(255, 215, 0, 0.1) 0%, rgba(0, 0, 0, 0.4) 100%);
+            border: 1px solid rgba(255, 215, 0, 0.3);
+            flex-direction: row;
+            align-items: center;
+            gap: 25px;
+        }
+
+        .workflow-card.highlight-card .card-icon-box {
+            margin-bottom: 0;
+            width: 80px;
+            height: 80px;
+            font-size: 2.5rem;
+            flex-shrink: 0;
+            background: #ffd700 !important;
+            color: #000 !important;
+            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
+        }
+
+        .workflow-card.highlight-card .card-bg-number {
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        @media (max-width: 768px) {
+            .workflow-card.highlight-card {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
 </head>
 
 <body class="mobile-layout" style="background-color: #0b0c15;">
 
-    <div class="shake-container">
-        <div id="introOverlay">
-            <div class="intro-content">
-                <div class="auction-text">IPL AUCTION</div>
+    <div id="introOverlay">
 
-                <div class="gavel-wrapper">
-                    <svg class="gavel" viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg">
-                        <defs>
-                            <linearGradient id="woodGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                <stop offset="0%" style="stop-color:#3E2723;stop-opacity:1" />
-                                <stop offset="30%" style="stop-color:#5D4037;stop-opacity:1" />
-                                <stop offset="50%" style="stop-color:#8D6E63;stop-opacity:1" />
-                                <stop offset="70%" style="stop-color:#5D4037;stop-opacity:1" />
-                                <stop offset="100%" style="stop-color:#3E2723;stop-opacity:1" />
-                            </linearGradient>
-                            <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                                <stop offset="0%" style="stop-color:#B8860B;stop-opacity:1" />
-                                <stop offset="50%" style="stop-color:#FFD700;stop-opacity:1" />
-                                <stop offset="100%" style="stop-color:#B8860B;stop-opacity:1" />
-                            </linearGradient>
-                        </defs>
+        <div class="spotlight-bg"></div>
 
-                        <rect x="90" y="80" width="20" height="180" rx="5" fill="url(#woodGradient)" />
-                        <circle cx="100" cy="270" r="15" fill="url(#woodGradient)" stroke="#281815" stroke-width="2" />
-                        <rect x="20" y="20" width="160" height="70" rx="10" fill="url(#woodGradient)" stroke="#281815"
-                            stroke-width="2" />
-                        <rect x="30" y="20" width="15" height="70" fill="url(#goldGradient)" stroke="#8B4513"
-                            stroke-width="1" />
-                        <rect x="155" y="20" width="15" height="70" fill="url(#goldGradient)" stroke="#8B4513"
-                            stroke-width="1" />
-                        <rect x="90" y="20" width="20" height="70" fill="url(#goldGradient)" opacity="0.8" />
-                    </svg>
-                </div>
+        <div class="intro-content" id="introContent">
 
-                <div class="sound-block"></div>
-                <div class="shockwave"></div>
-                <div class="intro-start-text">START</div>
+            <div class="broken-text">
+                <span style="--tx:-200px; --ty:-300px; --r:-120deg">I</span>
+                <span style="--tx:-100px; --ty:200px; --r:-45deg">P</span>
+                <span style="--tx:-150px; --ty:-100px; --r:90deg">L</span>
+                &nbsp;
+                <span style="--tx:50px; --ty:350px; --r:180deg">A</span>
+                <span style="--tx:100px; --ty:-300px; --r:-90deg">U</span>
+                <span style="--tx:180px; --ty:200px; --r:45deg">C</span>
+                <span style="--tx:250px; --ty:-150px; --r:-60deg">T</span>
+                <span style="--tx:200px; --ty:250px; --r:130deg">I</span>
+                <span style="--tx:300px; --ty:-50px; --r:-15deg">O</span>
+                <span style="--tx:350px; --ty:150px; --r:80deg">N</span>
             </div>
+
+            <div class="shockwave"></div>
+
+            <div class="gavel-wrapper">
+                <svg viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg" style="width:100%; height:100%;">
+                    <defs>
+                        <linearGradient id="woodGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" style="stop-color:#3E2723" />
+                            <stop offset="40%" style="stop-color:#5D4037" />
+                            <stop offset="60%" style="stop-color:#8D6E63" />
+                            <stop offset="100%" style="stop-color:#3E2723" />
+                        </linearGradient>
+                        <linearGradient id="goldGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style="stop-color:#FDB931" />
+                            <stop offset="30%" style="stop-color:#FFFFE0" />
+                            <stop offset="60%" style="stop-color:#D4AF37" />
+                            <stop offset="100%" style="stop-color:#8A6E2F" />
+                        </linearGradient>
+                    </defs>
+
+                    <rect x="90" y="80" width="20" height="200" rx="4" fill="url(#woodGradient)" />
+                    <rect x="90" y="260" width="20" height="10" fill="rgba(0,0,0,0.3)" />
+                    <g transform="translate(0, 0)">
+                        <rect x="20" y="20" width="160" height="70" rx="15" fill="url(#woodGradient)" stroke="#1a1a1a"
+                            stroke-width="1" />
+                        <rect x="35" y="18" width="15" height="74" fill="url(#goldGradient)" />
+                        <rect x="150" y="18" width="15" height="74" fill="url(#goldGradient)" />
+                        <rect x="90" y="20" width="20" height="70" fill="url(#goldGradient)" opacity="0.9" />
+                    </g>
+                </svg>
+            </div>
+
+            <div class="sold-stamp">START..</div>
+
         </div>
+
+        <div id="sparkContainer"></div>
     </div>
+
 
     <div id="lobbyScreen">
         <div class="lobby-card">
-            <h1 class="lobby-title" style="color:yellow">IPL AUCTION..</h1>
+            <h1 class="lobby-title" style="color:yellow">IPL AUCTION</h1>
             <ul class="nav nav-pills mb-3 justify-content-center" id="lobbyTabs">
                 <li class="nav-item"><button class="nav-link active rounded-0 btn-gold text-dark" data-bs-toggle="tab"
                         data-bs-target="#createTab">CREATE ROOM</button>
@@ -115,84 +571,96 @@
     <div class="modal fade" id="aboutModal" tabindex="-1">
         <div class="modal-dialog modal-dialog-centered modal-xl">
             <div class="modal-content bg-dark border-secondary text-white"
-                style="background-color: #151621 !important; border: 1px solid rgba(255,215,0,0.3);">
-                <div class="modal-header border-bottom border-secondary">
+                style="background-color: #0b0c15 !important; border: 1px solid rgba(255,215,0,0.2); box-shadow: 0 0 50px rgba(0,0,0,0.8);">
+                <div class="modal-header border-bottom border-secondary" style="background: rgba(0,0,0,0.2);">
                     <h5 class="modal-title display-font text-info"><i class="bi bi-info-circle-fill me-2"></i> GAME
                         WORKFLOW</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="modal-body p-4">
+                <div class="modal-body p-4"
+                    style="background: radial-gradient(circle at top right, rgba(20,30,50,0.4), transparent);">
                     <div class="text-center mb-5">
-                        <h2 class="display-font text-white" style="font-size: 3rem; letter-spacing: 2px;">IPL MEGA
+                        <h2 class="display-font text-white"
+                            style="font-size: 3.5rem; letter-spacing: 2px; text-shadow: 0 0 20px rgba(0, 122, 255, 0.5);">
+                            IPL MEGA
                             AUCTION '25</h2>
-                        <p class="text-white-50">The Complete Multiplayer Experience</p>
+                        <p class="text-white-50 fs-5">The Complete Multiplayer Strategy Experience</p>
                     </div>
 
                     <div class="workflow-grid">
                         <div class="workflow-card">
                             <div class="card-bg-number">01</div>
-                            <div class="card-icon-box" style="background: rgba(0, 122, 255, 0.2); color: #007aff;">
+                            <div class="card-icon-box"
+                                style="background: rgba(0, 122, 255, 0.1); color: #007aff; border-color: rgba(0,122,255,0.3);">
                                 <i class="bi bi-door-open-fill"></i>
                             </div>
-                            <h4 class="card-title">Lobby & Teams</h4>
-                            <p class="card-desc">Create a private room. Joiners pick their franchises. Host configures
-                                budget & slots.</p>
+                            <h4 class="card-title" style="color: #64b5f6;">Lobby & Teams</h4>
+                            <p class="card-desc">Create a secure private room. Joiners select their favorite franchises.
+                                Host configures budget caps & slots.</p>
                         </div>
 
                         <div class="workflow-card">
                             <div class="card-bg-number">02</div>
-                            <div class="card-icon-box" style="background: rgba(255, 215, 0, 0.2); color: #ffd700;">
+                            <div class="card-icon-box"
+                                style="background: rgba(255, 215, 0, 0.1); color: #ffd700; border-color: rgba(255,215,0,0.3);">
                                 <i class="bi bi-hammer"></i>
                             </div>
                             <h4 class="card-title text-gold">Live Bidding</h4>
-                            <p class="card-desc">Real-time auction. Bid against friends. Manage your purse dynamically.
-                                Don't overspend!</p>
+                            <p class="card-desc">Real-time low latency auction. Bid wars against friends. Manage your
+                                purse dynamically. Don't go broke!</p>
                         </div>
 
                         <div class="workflow-card">
                             <div class="card-bg-number">03</div>
-                            <div class="card-icon-box" style="background: rgba(0, 230, 118, 0.2); color: #00e676;">
+                            <div class="card-icon-box"
+                                style="background: rgba(0, 230, 118, 0.1); color: #00e676; border-color: rgba(0,230,118,0.3);">
                                 <i class="bi bi-person-check-fill"></i>
                             </div>
-                            <h4 class="card-title">Squad Selection</h4>
-                            <p class="card-desc">Select your best Playing XI, 1 Impact Player, and appoint a Captain
-                                from your buy.</p>
+                            <h4 class="card-title" style="color: #69f0ae;">Squad Selection</h4>
+                            <p class="card-desc">Strategically select your Playing XI, 1 Impact Player, and appoint a
+                                Captain from your purchased lot.</p>
                         </div>
 
                         <div class="workflow-card">
                             <div class="card-bg-number">04</div>
-                            <div class="card-icon-box" style="background: rgba(224, 64, 251, 0.2); color: #e040fb;">
+                            <div class="card-icon-box"
+                                style="background: rgba(224, 64, 251, 0.1); color: #e040fb; border-color: rgba(224,64,251,0.3);">
                                 <i class="bi bi-cpu-fill"></i>
                             </div>
-                            <h4 class="card-title">AI Simulation</h4>
-                            <p class="card-desc">Advanced AI engine simulates the entire season, calculating runs,
-                                wickets, and wins.</p>
+                            <h4 class="card-title" style="color: #ea80fc;">AI Simulation</h4>
+                            <p class="card-desc">Advanced Algorithm simulates the entire season match-by-match,
+                                calculating runs, wickets, and NRR.</p>
                         </div>
 
                         <div class="workflow-card">
                             <div class="card-bg-number">05</div>
-                            <div class="card-icon-box" style="background: rgba(255, 87, 34, 0.2); color: #ff5722;">
+                            <div class="card-icon-box"
+                                style="background: rgba(255, 87, 34, 0.1); color: #ff5722; border-color: rgba(255,87,34,0.3);">
                                 <i class="bi bi-graph-up-arrow"></i>
                             </div>
-                            <h4 class="card-title">Stats & Awards</h4>
-                            <p class="card-desc">View Points Table. Winners of Orange Cap, Purple Cap, and MVP are
-                                declared instantly.</p>
+                            <h4 class="card-title" style="color: #ff8a65;">Stats & Awards</h4>
+                            <p class="card-desc">Instant analysis. View Points Table. Orange Cap, Purple Cap, and MVP
+                                winners declared instantly.</p>
                         </div>
 
                         <div class="workflow-card highlight-card">
                             <div class="card-bg-number">06</div>
-                            <div class="card-icon-box" style="background: #ffd700; color: #000;">
+                            <div class="card-icon-box">
                                 <i class="bi bi-trophy-fill"></i>
                             </div>
-                            <h4 class="card-title text-white" style="color:white">The Champion</h4>
-                            <p class="card-desc text-white-70" style="color:white">Playoffs logic runs. The Final is
-                                played. One team lifts
-                                the IPL Trophy!</p>
+                            <div>
+                                <h4 class="card-title text-white"
+                                    style="color:white; font-size: 2rem; text-shadow: 0 0 10px rgba(0,0,0,0.5);">The
+                                    Champion</h4>
+                                <p class="card-desc text-white" style="color:rgba(255,255,255,0.9); font-size: 1.1rem;">
+                                    Playoffs logic executes. The Final is played. One team lifts the IPL Trophy in
+                                    glory!</p>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="mt-4 pt-3 border-top border-secondary text-center">
-                        <small class="text-white-50">Tech Stack: HTML5 • CSS3 • Bootstrap 5 • Socket.IO •
+                    <div class="mt-5 pt-3 border-top border-secondary text-center">
+                        <small class="text-white-50 font-monospace">POWERED BY: HTML5 • CSS3 • Bootstrap 5 • Socket.IO •
                             Node.js</small>
                     </div>
                 </div>
@@ -607,6 +1075,42 @@
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
 
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            // Intro Animation Timing Scripts
+            const introContent = document.getElementById('introContent');
+            const sparkContainer = document.getElementById('sparkContainer');
+
+            // Trigger Shake and Explosion slightly after animation starts (sync with hammer hit)
+            setTimeout(() => {
+                introContent.classList.add('shake-active');
+                createExplosion();
+            }, 1150); // Matches the CSS hammer hit timing
+
+            function createExplosion() {
+                const particleCount = 40;
+                const colors = ['#FFD700', '#FFA500', '#FFFFFF', '#FF4500'];
+
+                for (let i = 0; i < particleCount; i++) {
+                    const spark = document.createElement('div');
+                    spark.className = 'spark';
+
+                    // Random Trajectory
+                    const angle = Math.random() * 360;
+                    const velocity = 100 + Math.random() * 300; // distance
+                    const tx = Math.cos(angle * Math.PI / 180) * velocity;
+                    const ty = Math.sin(angle * Math.PI / 180) * velocity;
+
+                    spark.style.setProperty('--sx', `${tx}px`);
+                    spark.style.setProperty('--sy', `${ty}px`);
+                    spark.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                    spark.style.animation = `sparkFly 0.8s ease-out forwards`;
+
+                    sparkContainer.appendChild(spark);
+                }
+            }
+        });
+    </script>
     <script src="script.js"></script>
 </body>
 
