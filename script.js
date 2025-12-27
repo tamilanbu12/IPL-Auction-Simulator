@@ -1,11 +1,9 @@
 // ======================================================
 // 🔧 0. PERSISTENT IDENTITY (THE WRISTBAND)
 // ======================================================
-// This ensures that if a user refreshes, they keep the same ID.
 let myPersistentId = localStorage.getItem("ipl_auction_player_id");
 
 if (!myPersistentId) {
-  // Generate a random unique ID if one doesn't exist
   myPersistentId =
     "user_" + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
   localStorage.setItem("ipl_auction_player_id", myPersistentId);
@@ -23,7 +21,6 @@ const socket = io({
   reconnectionAttempts: Infinity,
   reconnectionDelay: 2000,
   timeout: 20000,
-  // SEND THE ID TO THE SERVER ON CONNECT
   auth: {
     playerId: myPersistentId,
   },
@@ -51,14 +48,10 @@ let lastTournamentData = null;
 // ======================================================
 let socketAlive = true;
 
-// --- HEARTBEAT (PREVENT RENDER SLEEP) ---
-// This runs every 2 minutes to keep the app awake
 setInterval(() => {
-  // 1. Ping the Socket
   if (socket.connected) {
     socket.emit("pingServer");
   }
-  // 2. Ping the HTTP Server
   fetch(window.location.href)
     .then(() => console.log("✅ Keep-Alive: HTTP Ping Sent"))
     .catch(() => console.log("⚠️ Keep-Alive: HTTP Ping Failed"));
@@ -82,7 +75,6 @@ socket.on("reconnect", () => {
   console.log("🔁 Reconnected");
   logEvent("🔁 Reconnected to server", true);
 
-  // 🔧 CRITICAL FIX: Ensure bidding is enabled after reconnect
   if (document.getElementById("setupSection").style.display === "none") {
     auctionStarted = true;
   }
@@ -292,7 +284,6 @@ const PLAYER_DATABASE = {
   "R Sai Kishore": { bat: 25, bowl: 84, luck: 82, type: "bowl" },
   "Suyash Sharma": { bat: 5, bowl: 84, luck: 80, type: "bowl" },
   "Manimaran Siddharth": { bat: 10, bowl: 80, luck: 75, type: "bowl" },
-  // ... (Your existing database logic is preserved in helper functions below)
 };
 
 const MARQUEE_PLAYERS = {
@@ -521,6 +512,7 @@ const RAW_DATA = {
 const PLAYER_IMAGE_MAP = {
   "David Warner":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRy2UoIz9RctCjtDw0iTDr9W8lq_jMqGo0JpQ&s",
+
   "Virat Kohli":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSXd7IOQ0NKyGMznUdvuNfPqT1PjyLLWs2PlA&s",
   "rohit sharma":
@@ -938,7 +930,7 @@ socket.on("room_joined", (data) => {
   }
 
   if (data.state && data.state.isActive) {
-    auctionStarted = true; // 🔧 Fixed: Ensure auction mode is explicitly active
+    auctionStarted = true;
     switchToAuctionMode(data.state.teams);
     if (data.state.queue) auctionQueue = data.state.queue;
     socket.emit("request_sync");
@@ -1025,7 +1017,6 @@ socket.on("sync_data", (data) => {
 socket.off("error_message");
 socket.on("error_message", (msg) => (lobbyError.innerText = msg));
 
-// 🚀 ADMIN: Listen for Reclaim Requests
 socket.off("admin_reclaim_request");
 socket.on("admin_reclaim_request", (data) => {
   if (
@@ -1108,14 +1099,13 @@ function renderLobbyTeams() {
       } else {
         statusClass = "taken";
         statusText = "TAKEN";
-        // 🚀 NEW: Click to request reclaim if taken
         clickAction = `onclick="requestReclaim('${t.bidKey}')"`;
       }
     } else {
       statusClass = "available";
       statusText = "CLICK TO JOIN";
       if (iHaveATeam) {
-        clickAction = `onclick="alert('You have already joined a team! You cannot join multiple teams.')" style="cursor: not-allowed; opacity: 0.5;"`;
+        clickAction = `onclick="alert('You have already joined a team!')" style="cursor: not-allowed; opacity: 0.5;"`;
       } else {
         clickAction = `onclick="claimLobbyTeam('${t.bidKey}')"`;
       }
@@ -1149,7 +1139,6 @@ function renderLobbyTeams() {
   }
 }
 
-// 🚀 NEW: Manual Reclaim Request
 function requestReclaim(bidKey) {
   if (
     confirm(
@@ -1163,7 +1152,7 @@ function requestReclaim(bidKey) {
 
 function claimLobbyTeam(key) {
   if (mySelectedTeamKey) {
-    alert("You have already joined a team! You cannot join multiple teams.");
+    alert("You have already joined a team!");
     return;
   }
   socket.emit("claim_lobby_team", key);
@@ -1326,7 +1315,7 @@ document.getElementById("startBtn").addEventListener("click", () => {
 
 socket.off("auction_started");
 socket.on("auction_started", (data) => {
-  auctionStarted = true; // 🔧 FIX: Set active state immediately
+  auctionStarted = true;
   switchToAuctionMode(data.teams);
   auctionQueue = data.queue;
   logEvent(`<strong>AUCTION STARTED</strong>`, true);
@@ -1482,7 +1471,6 @@ socket.on("bid_update", (data) => {
 
 function submitMyBid() {
   if (!socketAlive) return alert("Connection lost. Please wait…");
-  // 🔧 FIX: Check global variable auctionStarted
   if (
     !auctionStarted ||
     document.getElementById("saleOverlay").classList.contains("overlay-active")
@@ -1749,7 +1737,6 @@ function renderMySquadSelection() {
         }')">C</button>`
       : "";
 
-    // 🔧 MATCHING YOUR TEMPLATE STRUCTURE:
     list.innerHTML += `
                 <div class="player-check-card p11-card" id="p11-${originalIndex}" onclick="toggleP11(${originalIndex}, '${p.name}')">
                     <span class="squad-number">${num}</span>
@@ -1874,17 +1861,33 @@ socket.on("simulation_error", (msg) => {
   document.getElementById("waitingMsg").innerText = "ERROR: " + msg;
 });
 
+// ==========================================
+// 🔧 CRITICAL FIX FOR RESULTS DISPLAY
+// ==========================================
 socket.off("tournament_results");
 socket.on("tournament_results", (results) => {
   lastTournamentData = results;
+
+  // 1. Hide Squad Selection Overlay
   document
     .getElementById("squadSelectionScreen")
     .classList.remove("overlay-active");
-  document.getElementById("resultsScreen").style.opacity = "1";
-  document.getElementById("resultsScreen").style.pointerEvents = "auto";
+  document.getElementById("squadSelectionScreen").style.display = "none"; // Ensure it's gone
 
-  document.getElementById("winnerName").innerText = results.winner;
-  document.getElementById("runnerName").innerText = results.runnerUp;
+  // 2. SHOW RESULTS SCREEN (Force display block)
+  const resScreen = document.getElementById("resultsScreen");
+  resScreen.style.display = "block"; // Changed from flex/none check
+  resScreen.style.opacity = "1";
+  resScreen.style.pointerEvents = "auto";
+  resScreen.style.zIndex = "2000"; // Ensure on top
+
+  // 3. Populate Winner Data
+  if (results.winner)
+    document.getElementById("winnerName").innerText = results.winner;
+  if (results.runnerUp)
+    document.getElementById("runnerName").innerText = results.runnerUp;
+
+  // 4. Populate Stats
   document.getElementById("resOrange").innerText = results.orangeCap.name;
   document.getElementById(
     "resOrangeStat"
@@ -1892,32 +1895,40 @@ socket.on("tournament_results", (results) => {
   document.getElementById("resPurple").innerText = results.purpleCap.name;
   document.getElementById(
     "resPurpleStat"
-  ).innerText = `${results.purpleCap.wickets} Wkts`;
+  ).innerText = `${results.purpleCap.wkts} Wkts`;
   document.getElementById("resMvp").innerText = results.mvp.name;
   document.getElementById("resMvpStat").innerText = `${results.mvp.pts} Pts`;
 
+  // 5. Populate Points Table
   const ptBody = document.getElementById("pointsTableBody");
   ptBody.innerHTML = "";
   results.standings.forEach((t, i) => {
-    ptBody.innerHTML += `<tr><td>${i + 1}</td><td class="text-start">${
-      t.name
-    }</td><td>${t.played}</td><td>${t.won}</td><td>${
-      t.lost
-    }</td><td>${t.nrr.toFixed(3)}</td><td>${t.points}</td></tr>`;
+    ptBody.innerHTML += `<tr>
+        <td>${i + 1}</td>
+        <td class="text-start">${t.name}</td>
+        <td>${t.stats.p}</td>
+        <td>${t.stats.w}</td>
+        <td>${t.stats.l}</td>
+        <td>${(t.stats.nrr || 0).toFixed(3)}</td>
+        <td>${t.stats.pts}</td>
+    </tr>`;
   });
 
+  // 6. Populate Match Center
   const mLog = document.getElementById("matchLogContainer");
   mLog.innerHTML = "";
   results.leagueMatches.forEach(
     (m, i) => (mLog.innerHTML += createMatchCard(m, false, i))
   );
 
+  // 7. Populate Playoffs
   const tree = document.getElementById("playoffTree");
   tree.innerHTML = "";
   results.playoffs.forEach(
     (m, i) => (tree.innerHTML += createMatchCard(m, true, i))
   );
 
+  // 8. Populate Squads
   renderAllTeams(results.allTeamsData);
 });
 
@@ -1933,31 +1944,29 @@ function renderAllTeams(teamsData) {
     const playingNames = playingList.map((p) => p.name);
 
     playingList.forEach((p) => {
-      const icon = getRoleIcon(p.roleKey);
+      const icon = getRoleIcon(p.roleKey || "bat");
       const isCapt =
         team.captain === p.name ? '<span class="captain-badge">C</span>' : "";
       p11Html += `<div class="team-player-row" style="border-left: 3px solid #00E676; padding-left:8px;">
-                            <span class="text-white">${icon} ${
-        p.name
-      } ${isCapt}</span>
-                            <span class="text-white-50">${formatAmount(
-                              p.price || 0
-                            )}</span>
-                        </div>`;
+                    <span class="text-white">${icon} ${p.name} ${isCapt}</span>
+                    <span class="text-white-50">${formatAmount(
+                      p.price || 0
+                    )}</span>
+                </div>`;
     });
 
     const fullRoster = team.roster || [];
     fullRoster.forEach((p) => {
       if (!playingNames.includes(p.name)) {
-        const icon = getRoleIcon(p.roleKey);
+        const icon = getRoleIcon(p.roleKey || "bat");
         benchHtml += `<div class="team-player-row" style="opacity:0.5;">
-                                <span class="text-white">${icon} ${
+                        <span class="text-white">${icon} ${
           p.name
         } (Bench)</span>
-                                <span class="text-white-50">${formatAmount(
-                                  p.price || 0
-                                )}</span>
-                            </div>`;
+                        <span class="text-white-50">${formatAmount(
+                          p.price || 0
+                        )}</span>
+                    </div>`;
       }
     });
 
@@ -1980,20 +1989,22 @@ function renderAllTeams(teamsData) {
 }
 
 function createMatchCard(m, isPlayoff = false, index) {
+  // Safety checks for undefined data
+  const topScorerName = m.topScorer ? m.topScorer.name : "-";
+  const topScorerRuns = m.topScorer ? m.topScorer.runs : "0";
+  const bestBowlerName = m.bestBowler ? m.bestBowler.name : "-";
+  const bestBowlerFigs = m.bestBowler ? m.bestBowler.figures : "0-0";
+  const momName = m.topScorer ? m.topScorer.name : m.winnerName || "-";
+
   let footerHtml = `
             <div class="d-flex justify-content-between w-100 px-2">
-                <div class="perf-item"><span class="role-badge role-bat me-2">BAT</span> <span class="text-white">${m.topScorer.name} <span class="text-warning">(${m.topScorer.runs})</span></span></div>
-                <div class="perf-item"><span class="role-badge role-bowl me-2">BOWL</span> <span class="text-white">${m.bestBowler.name} <span class="text-info">(${m.bestBowler.figures})</span></span></div>
+                <div class="perf-item"><span class="role-badge role-bat me-2">BAT</span> <span class="text-white">${topScorerName} <span class="text-warning">(${topScorerRuns})</span></span></div>
+                <div class="perf-item"><span class="role-badge role-bowl me-2">BOWL</span> <span class="text-white">${bestBowlerName} <span class="text-info">(${bestBowlerFigs})</span></span></div>
             </div>`;
+
   const clickFn = `onclick="openScorecard('${
     isPlayoff ? "playoff" : "league"
   }', ${index})"`;
-  const momName =
-    m.top3Performers && m.top3Performers.length > 0
-      ? m.top3Performers[0].name
-      : m.topScorer
-      ? m.topScorer.name
-      : "-";
 
   return `
             <div class="match-card ${isPlayoff ? "playoff" : ""}" ${clickFn}>
