@@ -47,19 +47,18 @@ let connectedUsersCount = 1;
 let lastTournamentData = null;
 
 // ======================================================
-// 🔧 2. SOCKET HEALTH + HEARTBEAT (UPDATED FOR RENDER)
+// 🔧 2. SOCKET HEALTH + HEARTBEAT
 // ======================================================
 let socketAlive = true;
 
 // --- HEARTBEAT (PREVENT RENDER SLEEP) ---
-// This runs every 5 minutes (300,000 ms) to keep the app awake
+// This runs every 2 minutes to keep the app awake
 setInterval(() => {
-  // 1. Ping the Socket (Keeps the WebSocket connection alive)
+  // 1. Ping the Socket
   if (socket.connected) {
     socket.emit("pingServer");
   }
-
-  // 2. Ping the HTTP Server (Keeps the Render Server awake)
+  // 2. Ping the HTTP Server
   fetch(window.location.href)
     .then(() => console.log("✅ Keep-Alive: HTTP Ping Sent"))
     .catch(() => console.log("⚠️ Keep-Alive: HTTP Ping Failed"));
@@ -69,7 +68,7 @@ setInterval(() => {
 socket.on("connect", () => {
   socketAlive = true;
   console.log("✅ Socket connected:", socket.id);
-  if (lobbyError) lobbyError.innerText = ""; // Clear errors on connect
+  if (lobbyError) lobbyError.innerText = "";
 });
 
 socket.on("disconnect", (reason) => {
@@ -83,11 +82,13 @@ socket.on("reconnect", () => {
   console.log("🔁 Reconnected");
   logEvent("🔁 Reconnected to server", true);
 
-  // Ask server to sync auction state again
+  // 🔧 CRITICAL FIX: Ensure bidding is enabled after reconnect
+  if (document.getElementById("setupSection").style.display === "none") {
+    auctionStarted = true;
+  }
+
   if (myRoomId) {
     socket.emit("request_sync");
-    // Also try to reclaim team based on persistent ID logic which server will handle
-    // But we also keep the local storage backup for safety
     const savedTeamKey = localStorage.getItem(`ipl_team_${myRoomId}`);
     if (savedTeamKey) {
       socket.emit("reclaim_team", savedTeamKey);
@@ -95,9 +96,7 @@ socket.on("reconnect", () => {
   }
 });
 
-socket.on("pongServer", () => {
-  // silent keep-alive response
-});
+socket.on("pongServer", () => {});
 
 // ======================================================
 // 🔧 3. SAFE PAGE REFRESH HANDLING
@@ -293,8 +292,7 @@ const PLAYER_DATABASE = {
   "R Sai Kishore": { bat: 25, bowl: 84, luck: 82, type: "bowl" },
   "Suyash Sharma": { bat: 5, bowl: 84, luck: 80, type: "bowl" },
   "Manimaran Siddharth": { bat: 10, bowl: 80, luck: 75, type: "bowl" },
-
-  // Add more specific stats here if needed
+  // ... (Your existing database logic is preserved in helper functions below)
 };
 
 const MARQUEE_PLAYERS = {
@@ -523,7 +521,6 @@ const RAW_DATA = {
 const PLAYER_IMAGE_MAP = {
   "David Warner":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRy2UoIz9RctCjtDw0iTDr9W8lq_jMqGo0JpQ&s",
-
   "Virat Kohli":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSXd7IOQ0NKyGMznUdvuNfPqT1PjyLLWs2PlA&s",
   "rohit sharma":
@@ -769,7 +766,6 @@ const PLAYER_IMAGE_MAP = {
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQgVBnKUGvBQjHnNvaw_A9lKO7c6MwP2EqHlQ&s",
   "Josh Inglis":
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ96_gVuW8JTbxirRPH9mVAjB59jbtQRt6UtQ&s",
-  // Add other images
 };
 
 const ROLE_ORDER = {
@@ -864,7 +860,7 @@ function getPlayerStats(name, roleHint = "bat") {
 }
 
 // --- DOM EVENT LISTENERS ---
-// 🔧 UPDATED: Save credentials on CREATE
+// 🔧 HOST CREDENTIALS
 document.getElementById("doCreateBtn").addEventListener("click", () => {
   if (!socketAlive)
     return (lobbyError.innerText = "Connection lost. Reconnecting...");
@@ -875,7 +871,6 @@ document.getElementById("doCreateBtn").addEventListener("click", () => {
   if (!roomId || pass.length !== 4)
     return (lobbyError.innerText = "Invalid Details");
 
-  // Save credentials for auto-join
   localStorage.setItem("ipl_last_room", roomId);
   localStorage.setItem("ipl_last_pass", pass);
 
@@ -886,7 +881,7 @@ document.getElementById("doCreateBtn").addEventListener("click", () => {
   });
 });
 
-// 🔧 UPDATED: Save credentials on JOIN
+// 🔧 JOIN CREDENTIALS
 document.getElementById("doJoinBtn").addEventListener("click", () => {
   if (!socketAlive)
     return (lobbyError.innerText = "Connection lost. Reconnecting...");
@@ -895,7 +890,6 @@ document.getElementById("doJoinBtn").addEventListener("click", () => {
   if (!roomId || pass.length !== 4)
     return (lobbyError.innerText = "Check Credentials");
 
-  // Save credentials for auto-join
   localStorage.setItem("ipl_last_room", roomId);
   localStorage.setItem("ipl_last_pass", pass);
 
@@ -935,13 +929,16 @@ socket.on("room_joined", (data) => {
     if (savedTeamKey) {
       socket.emit("reclaim_team", savedTeamKey);
     } else {
-      const myTeam = globalTeams.find((t) => t.ownerSocketId === socket.id);
+      const myTeam = globalTeams.find(
+        (t) => t.ownerPlayerId === myPersistentId
+      );
       if (myTeam) mySelectedTeamKey = myTeam.bidKey;
     }
     renderLobbyTeams();
   }
 
   if (data.state && data.state.isActive) {
+    auctionStarted = true; // 🔧 Fixed: Ensure auction mode is explicitly active
     switchToAuctionMode(data.state.teams);
     if (data.state.queue) auctionQueue = data.state.queue;
     socket.emit("request_sync");
@@ -1028,6 +1025,28 @@ socket.on("sync_data", (data) => {
 socket.off("error_message");
 socket.on("error_message", (msg) => (lobbyError.innerText = msg));
 
+// 🚀 ADMIN: Listen for Reclaim Requests
+socket.off("admin_reclaim_request");
+socket.on("admin_reclaim_request", (data) => {
+  if (
+    confirm(
+      `RECLAIM REQUEST:\nUser wants to reclaim Team: ${data.teamName}\nAllow?`
+    )
+  ) {
+    socket.emit("admin_reclaim_decision", {
+      approved: true,
+      teamKey: data.teamKey,
+      requesterId: data.requesterId,
+      requesterPid: data.requesterPid,
+    });
+  } else {
+    socket.emit("admin_reclaim_decision", {
+      approved: false,
+      requesterId: data.requesterId,
+    });
+  }
+});
+
 function enterGame(roomId) {
   myRoomId = roomId;
   document.getElementById("currentRoomDisplay").innerText = roomId;
@@ -1089,6 +1108,8 @@ function renderLobbyTeams() {
       } else {
         statusClass = "taken";
         statusText = "TAKEN";
+        // 🚀 NEW: Click to request reclaim if taken
+        clickAction = `onclick="requestReclaim('${t.bidKey}')"`;
       }
     } else {
       statusClass = "available";
@@ -1128,6 +1149,18 @@ function renderLobbyTeams() {
   }
 }
 
+// 🚀 NEW: Manual Reclaim Request
+function requestReclaim(bidKey) {
+  if (
+    confirm(
+      "This team is taken. Do you want to request the Host to reclaim it?"
+    )
+  ) {
+    socket.emit("request_reclaim_manual", { teamKey: bidKey });
+    lobbyError.innerText = "Request sent to Host... Waiting for approval.";
+  }
+}
+
 function claimLobbyTeam(key) {
   if (mySelectedTeamKey) {
     alert("You have already joined a team! You cannot join multiple teams.");
@@ -1153,6 +1186,7 @@ socket.on("team_claim_success", (key) => {
   mySelectedTeamKey = key;
   if (myRoomId) localStorage.setItem(`ipl_team_${myRoomId}`, key);
   renderLobbyTeams();
+  lobbyError.innerText = "✅ Team ownership granted!";
   logEvent("✅ Team ownership restored.", true);
 });
 
@@ -1161,18 +1195,11 @@ function buildAuctionQueue() {
   const shuffle = (array) => array.sort(() => Math.random() - 0.5);
 
   const createPlayer = (dataObj, setName, roleHint, basePrice, increment) => {
-    let name, type;
-    if (typeof dataObj === "object" && dataObj.name) {
-      name = dataObj.name;
-      type = dataObj.type;
-    } else {
-      name = dataObj;
-      type = "Unknown";
-    }
+    let name = typeof dataObj === "object" ? dataObj.name : dataObj;
+    let type = typeof dataObj === "object" ? dataObj.type : "Unknown";
     const stats = getPlayerStats(name, roleHint);
     const imageSrc =
       PLAYER_IMAGE_MAP[name] || PLAYER_IMAGE_MAP[name.toLowerCase()] || null;
-
     return {
       name,
       category: `${type} ${roleHint}`,
@@ -1299,9 +1326,9 @@ document.getElementById("startBtn").addEventListener("click", () => {
 
 socket.off("auction_started");
 socket.on("auction_started", (data) => {
+  auctionStarted = true; // 🔧 FIX: Set active state immediately
   switchToAuctionMode(data.teams);
   auctionQueue = data.queue;
-  auctionStarted = true;
   logEvent(`<strong>AUCTION STARTED</strong>`, true);
 });
 
@@ -1455,6 +1482,7 @@ socket.on("bid_update", (data) => {
 
 function submitMyBid() {
   if (!socketAlive) return alert("Connection lost. Please wait…");
+  // 🔧 FIX: Check global variable auctionStarted
   if (
     !auctionStarted ||
     document.getElementById("saleOverlay").classList.contains("overlay-active")
@@ -1467,7 +1495,7 @@ function submitMyBid() {
   let currentPrice = parsePrice(document.getElementById("pBid").innerText);
   const inc = parseInt(document.getElementById("customBidInput").value);
 
-  if (document.getElementById("pBid").innerText === "₹-") {
+  if (document.getElementById("pBid").innerText.includes("-")) {
     currentPrice = currentActivePlayer.basePrice;
   } else {
     currentPrice += inc;
@@ -1570,20 +1598,16 @@ socket.on("sale_finalized", (data) => {
 // ======================================================
 function updateTeamSidebar(teams) {
   const container = document.getElementById("teams");
-  const isMobile = window.innerWidth <= 768; // Mobile check
+  const isMobile = window.innerWidth <= 768;
 
-  // 1. Create cards if they don't exist
   if (container.children.length !== teams.length) {
     container.innerHTML = "";
     teams.forEach((t) => {
       const isMine = mySelectedTeamKey === t.bidKey;
-
       const card = document.createElement("div");
       card.id = `team-card-${t.bidKey}`;
       card.className = "franchise-card";
       if (isMine) card.classList.add("my-team");
-
-      // --- MOBILE-OPTIMIZED CARD HTML ---
       card.innerHTML = `
                 <div class="f-header">
                     <div class="f-name text-white text-truncate" style="max-width: 120px;">
@@ -1593,7 +1617,6 @@ function updateTeamSidebar(teams) {
                     </div>
                     <div class="f-budget">${formatAmount(t.budget)}</div> 
                 </div>
-
                 <div class="mobile-squad-info" style="display: ${
                   isMobile ? "block" : "none"
                 }; font-size: 0.7rem; color: #aaa; margin-top: 4px;">
@@ -1602,55 +1625,32 @@ function updateTeamSidebar(teams) {
                         <div class="sq-progress" style="width: 0%; height: 100%; background: #00E676;"></div>
                     </div>
                 </div>
-
                 <div class="f-stats-grid" style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.7rem; color: #888;">
-                    <div class="f-stat-item">
-                        <div class="f-stat-label">Ply</div>
-                        <div class="f-stat-value sq-val">0</div>
-                    </div>
-                    <div class="f-stat-item">
-                        <div class="f-stat-label">Frgn</div>
-                        <div class="f-stat-value frgn-val">0</div>
-                    </div>
-                    <div class="f-stat-item">
-                        <div class="f-stat-label">RTM</div>
-                        <div class="f-stat-value rtm-val">0</div>
-                    </div>
+                    <div class="f-stat-item"><div class="f-stat-label">Ply</div><div class="f-stat-value sq-val">0</div></div>
+                    <div class="f-stat-item"><div class="f-stat-label">Frgn</div><div class="f-stat-value frgn-val">0</div></div>
+                    <div class="f-stat-item"><div class="f-stat-label">RTM</div><div class="f-stat-value rtm-val">0</div></div>
                 </div>
             `;
       container.appendChild(card);
     });
   }
 
-  // 2. Update dynamic data for existing cards
   teams.forEach((t) => {
     const card = document.getElementById(`team-card-${t.bidKey}`);
     if (!card) return;
-
     const isHighest = currentHighestBidderKey === t.bidKey;
-
-    // Toggle Active Bidder Styling
     if (isHighest) card.classList.add("active-bidder");
     else card.classList.remove("active-bidder");
-
-    // Calculate Stats
     const squadCount = t.roster ? t.roster.length : 0;
     const foreignCount = t.roster
       ? t.roster.filter((p) => p.playerType === "Foreign").length
       : 0;
     const rtmCount = t.rtmsUsed || 0;
-
-    // Update Text & Bars
     card.querySelector(".f-budget").innerText = formatAmount(t.budget);
-
-    // Update Stats values
     const sqCountEl = card.querySelector(".sq-count");
     if (sqCountEl) sqCountEl.innerText = squadCount;
-
     const sqProgEl = card.querySelector(".sq-progress");
     if (sqProgEl) sqProgEl.style.width = `${(squadCount / 25) * 100}%`;
-
-    // Update Grid Stats
     card.querySelector(".sq-val").innerText = squadCount;
     card.querySelector(".frgn-val").innerText = foreignCount;
     card.querySelector(".rtm-val").innerText = rtmCount;
@@ -1711,7 +1711,6 @@ socket.on("open_squad_selection", () => {
 function countForeigners(list) {
   return list.filter((p) => p.playerType === "Foreign").length;
 }
-
 function countKeepers(list) {
   return list.filter((p) => p.roleKey === "wk").length;
 }
@@ -1738,7 +1737,6 @@ function renderMySquadSelection() {
       ? '<span class="badge bg-danger ms-2" style="font-size:0.6rem">✈️</span>'
       : "";
     const roleIcon = getRoleIcon(p.roleKey);
-
     const isSelected = mySelectedSquad11.find((x) => x.name === p.name);
     const isCapt = mySelectedCaptain === p.name;
     const num = isSelected ? mySelectedSquad11.indexOf(isSelected) + 1 : "";
@@ -1751,6 +1749,7 @@ function renderMySquadSelection() {
         }')">C</button>`
       : "";
 
+    // 🔧 MATCHING YOUR TEMPLATE STRUCTURE:
     list.innerHTML += `
                 <div class="player-check-card p11-card" id="p11-${originalIndex}" onclick="toggleP11(${originalIndex}, '${p.name}')">
                     <span class="squad-number">${num}</span>
@@ -1767,7 +1766,6 @@ function toggleP11(i, name) {
   const p = globalTeams.find((t) => t.bidKey === mySelectedTeamKey).roster[i];
   if (mySelectedImpact && mySelectedImpact.name === name)
     return alert("Already Impact Player");
-
   const idx = mySelectedSquad11.findIndex((x) => x.name === name);
   if (idx > -1) {
     mySelectedSquad11.splice(idx, 1);
@@ -1775,9 +1773,8 @@ function toggleP11(i, name) {
   } else {
     if (mySelectedSquad11.length >= 11) return alert("Max 11 Players");
     const currentForeignCount = countForeigners(mySelectedSquad11);
-    if (p.playerType === "Foreign" && currentForeignCount >= 4) {
+    if (p.playerType === "Foreign" && currentForeignCount >= 4)
       return alert("MAX 4 FOREIGN PLAYERS ALLOWED IN PLAYING XI!");
-    }
     mySelectedSquad11.push(p);
   }
   renderMySquadSelection();
@@ -1845,7 +1842,6 @@ document.getElementById("submitSquadBtn").addEventListener("click", () => {
   document.getElementById("submitSquadBtn").innerHTML =
     "SUBMITTED <i class='bi bi-check'></i>";
   document.getElementById("submitSquadBtn").disabled = true;
-
   const waitMsg = document.getElementById("waitingMsg");
   waitMsg.classList.remove("d-none");
   if (isAdmin) {
@@ -1933,7 +1929,6 @@ function renderAllTeams(teamsData) {
   dataToRender.forEach((team) => {
     let p11Html = "",
       benchHtml = "";
-
     const playingList = team.playing11 || [];
     const playingNames = playingList.map((p) => p.name);
 
@@ -1941,30 +1936,28 @@ function renderAllTeams(teamsData) {
       const icon = getRoleIcon(p.roleKey);
       const isCapt =
         team.captain === p.name ? '<span class="captain-badge">C</span>' : "";
-      p11Html += `
-                            <div class="team-player-row" style="border-left: 3px solid #00E676; padding-left:8px;">
-                                <span class="text-white">${icon} ${
+      p11Html += `<div class="team-player-row" style="border-left: 3px solid #00E676; padding-left:8px;">
+                            <span class="text-white">${icon} ${
         p.name
       } ${isCapt}</span>
-                                <span class="text-white-50">${formatAmount(
-                                  p.price || 0
-                                )}</span>
-                            </div>`;
+                            <span class="text-white-50">${formatAmount(
+                              p.price || 0
+                            )}</span>
+                        </div>`;
     });
 
     const fullRoster = team.roster || [];
     fullRoster.forEach((p) => {
       if (!playingNames.includes(p.name)) {
         const icon = getRoleIcon(p.roleKey);
-        benchHtml += `
-                                <div class="team-player-row" style="opacity:0.5;">
-                                    <span class="text-white">${icon} ${
+        benchHtml += `<div class="team-player-row" style="opacity:0.5;">
+                                <span class="text-white">${icon} ${
           p.name
         } (Bench)</span>
-                                    <span class="text-white-50">${formatAmount(
-                                      p.price || 0
-                                    )}</span>
-                                </div>`;
+                                <span class="text-white-50">${formatAmount(
+                                  p.price || 0
+                                )}</span>
+                            </div>`;
       }
     });
 
@@ -1992,7 +1985,6 @@ function createMatchCard(m, isPlayoff = false, index) {
                 <div class="perf-item"><span class="role-badge role-bat me-2">BAT</span> <span class="text-white">${m.topScorer.name} <span class="text-warning">(${m.topScorer.runs})</span></span></div>
                 <div class="perf-item"><span class="role-badge role-bowl me-2">BOWL</span> <span class="text-white">${m.bestBowler.name} <span class="text-info">(${m.bestBowler.figures})</span></span></div>
             </div>`;
-
   const clickFn = `onclick="openScorecard('${
     isPlayoff ? "playoff" : "league"
   }', ${index})"`;
@@ -2124,7 +2116,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const introContainer = document.querySelector(".shake-container");
     if (introContainer) introContainer.style.display = "none";
     const lobby = document.getElementById("lobbyScreen");
-    // Only show lobby if gameContainer isn't already active (auto-joined)
     if (
       lobby &&
       document.getElementById("gameContainer").style.display === "none"
@@ -2133,20 +2124,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }, 4500);
 
-  // 🔧 AUTO-JOIN TRIGGER
-  const savedRoom = localStorage.getItem("ipl_last_room");
-  const savedPass = localStorage.getItem("ipl_last_pass");
-
-  if (savedRoom && savedPass) {
-    console.log(
-      `🔄 Found saved session for Room: ${savedRoom}. Auto-joining...`
-    );
-    if (socket.connected) {
-      socket.emit("join_room", { roomId: savedRoom, password: savedPass });
-    } else {
-      socket.once("connect", () => {
-        socket.emit("join_room", { roomId: savedRoom, password: savedPass });
-      });
-    }
+  // Auto-login check
+  if (
+    localStorage.getItem("ipl_last_room") &&
+    localStorage.getItem("ipl_last_pass")
+  ) {
+    const r = localStorage.getItem("ipl_last_room");
+    const p = localStorage.getItem("ipl_last_pass");
+    document.getElementById("joinRoomId").value = r;
+    document.getElementById("joinPass").value = p;
   }
 });
