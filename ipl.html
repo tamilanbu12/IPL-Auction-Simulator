@@ -1,4 +1,3 @@
-
 <!doctype html>
 <html lang="en">
 
@@ -17,7 +16,7 @@
 
     <style>
         /* =========================================
-           CINEMATIC INTRO STYLES
+            CINEMATIC INTRO STYLES
            ========================================= */
         #introOverlay {
             position: fixed;
@@ -309,8 +308,8 @@
         /* ABOUT SECTION STYLES */
         .workflow-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 25px;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
             padding: 10px;
         }
 
@@ -318,7 +317,7 @@
             background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(20, 20, 30, 0.6) 100%);
             border: 1px solid rgba(255, 255, 255, 0.05);
             border-radius: 16px;
-            padding: 30px 25px;
+            padding: 25px 20px;
             position: relative;
             overflow: hidden;
             backdrop-filter: blur(10px);
@@ -327,6 +326,7 @@
             flex-direction: column;
             justify-content: flex-start;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+            min-height: 220px;
         }
 
         .workflow-card:hover {
@@ -341,9 +341,9 @@
             top: -15px;
             right: -10px;
             font-family: 'Teko', sans-serif;
-            font-size: 8rem;
+            font-size: 6rem;
             font-weight: 700;
-            color: rgba(255, 255, 255, 0.02);
+            color: rgba(255, 255, 255, 0.03);
             line-height: 1;
             z-index: 0;
             transition: 0.4s;
@@ -351,28 +351,31 @@
         }
 
         .workflow-card:hover .card-bg-number {
-            color: rgba(255, 215, 0, 0.05);
+            color: rgba(255, 215, 0, 0.08);
             transform: scale(1.1) rotate(-5deg);
         }
 
         .card-icon-box {
-            width: 60px;
-            height: 60px;
+            width: 50px;
+            height: 50px;
             border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 1.8rem;
-            margin-bottom: 20px;
+            font-size: 1.5rem;
+            margin-bottom: 15px;
             z-index: 1;
             position: relative;
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: 0.4s;
+            color: #FFD700;
         }
 
         .workflow-card:hover .card-icon-box {
             transform: scale(1.1);
-            box-shadow: 0 0 25px currentColor;
+            background: #FFD700;
+            color: #000;
+            box-shadow: 0 0 25px rgba(255, 215, 0, 0.5);
             border-color: transparent;
         }
 
@@ -382,49 +385,23 @@
             text-transform: uppercase;
             letter-spacing: 1px;
             color: #fff;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
             z-index: 1;
-            font-size: 1.5rem;
+            font-size: 1.3rem;
         }
 
         .card-desc {
-            font-size: 0.95rem;
+            font-size: 0.9rem;
             color: #a0a0b0;
-            line-height: 1.6;
+            line-height: 1.5;
             z-index: 1;
             margin: 0;
         }
 
-        .workflow-card.highlight-card {
-            grid-column: 1 / -1;
-            background: linear-gradient(90deg, rgba(255, 215, 0, 0.1) 0%, rgba(0, 0, 0, 0.4) 100%);
-            border: 1px solid rgba(255, 215, 0, 0.3);
-            flex-direction: row;
-            align-items: center;
-            gap: 25px;
-        }
-
-        .workflow-card.highlight-card .card-icon-box {
-            margin-bottom: 0;
-            width: 80px;
-            height: 80px;
-            font-size: 2.5rem;
-            flex-shrink: 0;
-            background: #ffd700 !important;
-            color: #000 !important;
-            box-shadow: 0 0 20px rgba(255, 215, 0, 0.4);
-        }
-
-        .workflow-card.highlight-card .card-bg-number {
-            right: 20px;
-            top: 50%;
-            transform: translateY(-50%);
-        }
-
-        @media (max-width: 768px) {
-            .workflow-card.highlight-card {
-                flex-direction: column;
-                align-items: flex-start;
+        /* Responsive adjustments for the grid */
+        @media (min-width: 992px) {
+            .workflow-grid {
+                grid-template-columns: repeat(4, 1fr);
             }
         }
     </style>
@@ -476,7 +453,7 @@
                     </g>
                 </svg>
             </div>
-            <div class="sold-stamp">START...</div>
+            <div class="sold-stamp">START..</div>
         </div>
         <div id="sparkContainer"></div>
     </div>
@@ -546,11 +523,77 @@
                 </div>
                 <div class="modal-body p-4"
                     style="background: radial-gradient(circle at top right, rgba(20,30,50,0.4), transparent);">
-                    <div class="text-center mb-5">
-                        <h2 class="display-font text-white"
-                            style="font-size: 3.5rem; letter-spacing: 2px; text-shadow: 0 0 20px rgba(0, 122, 255, 0.5);">
-                            IPL MEGA AUCTION '25
-                        </h2>
+
+                    <div class="text-center mb-4">
+                        <h2 class="display-font text-white" style="font-size: 2.5rem; letter-spacing: 2px;">IPL MEGA
+                            AUCTION '25</h2>
+                        <p class="text-white-50">Complete Multiplayer Experience</p>
+                    </div>
+
+                    <div class="workflow-grid">
+                        <div class="workflow-card">
+                            <div class="card-bg-number">01</div>
+                            <div class="card-icon-box"><i class="bi bi-door-open-fill"></i></div>
+                            <div class="card-title">ENTER ARENA</div>
+                            <p class="card-desc">Create a private room with a secure password or join your friend's room
+                                using the ID.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">02</div>
+                            <div class="card-icon-box"><i class="bi bi-shield-shaded"></i></div>
+                            <div class="card-title">PICK FRANCHISE</div>
+                            <p class="card-desc">Select your IPL Team. The Host controls the settings and starts the
+                                game once everyone is ready.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">03</div>
+                            <div class="card-icon-box"><i class="bi bi-hammer"></i></div>
+                            <div class="card-title">LIVE AUCTION</div>
+                            <p class="card-desc">Realistic bidding experience with live logs, purse tracking, and
+                                strategic player sets.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">04</div>
+                            <div class="card-icon-box"><i class="bi bi-mic-fill"></i></div>
+                            <div class="card-title">AI AUCTIONEER</div>
+                            <p class="card-desc">Immersive text-to-speech AI announces player names, bids, and sold
+                                statuses in real-time.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">05</div>
+                            <div class="card-icon-box"><i class="bi bi-person-check-fill"></i></div>
+                            <div class="card-title">SQUAD BUILD</div>
+                            <p class="card-desc">Select your Playing XI and Impact Player order-wise from the players
+                                you bought.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">06</div>
+                            <div class="card-icon-box"><i class="bi bi-cpu-fill"></i></div>
+                            <div class="card-title">AI SIMULATION</div>
+                            <p class="card-desc">Advanced algorithm simulates the entire tournament match-by-match based
+                                on player stats.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">07</div>
+                            <div class="card-icon-box"><i class="bi bi-trophy-fill"></i></div>
+                            <div class="card-title">CHAMPIONS</div>
+                            <p class="card-desc">The team with the best performance wins the trophy. Runner-ups and
+                                playoffs are displayed.</p>
+                        </div>
+
+                        <div class="workflow-card">
+                            <div class="card-bg-number">08</div>
+                            <div class="card-icon-box"><i class="bi bi-graph-up-arrow"></i></div>
+                            <div class="card-title">DETAILED STATS</div>
+                            <p class="card-desc">Complete post-game analysis: Orange Cap, Purple Cap, MVP Leaderboard,
+                                and Points Table.</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -715,7 +758,16 @@
                     </div>
 
                     <div class="tab-pane fade" id="tabMatches">
-                        <div id="matchLogContainer" class="d-flex flex-column gap-2"></div>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h5 class="text-white-50 m-0">MATCH RESULTS</h5>
+                            <select id="matchFilterTeam"
+                                class="form-select w-auto bg-dark text-warning border-secondary display-font"
+                                onchange="filterMatchLogs(this.value)">
+                                <option value="ALL">ALL MATCHES</option>
+                            </select>
+                        </div>
+                        <div id="matchLogContainer" class="d-flex flex-column gap-2"
+                            style="max-height: 60vh; overflow-y: auto;"></div>
                     </div>
 
                     <div class="tab-pane fade" id="tabAllTeams">
@@ -751,9 +803,9 @@
                 </div>
             </div>
             <div class="ms-auto d-flex gap-2">
-                  <button id="soundToggleBtn" class="btn btn-sm btn-outline-light rounded-0 ms-2">
+                <button id="soundToggleBtn" class="btn btn-sm btn-outline-light rounded-0 ms-2">
                     <i class="bi bi-volume-mute-fill"></i>
-                 </button>
+                </button>
                 <span id="adminControls" class="admin-only d-flex gap-2">
                     <button id="endAuctionBtn" class="btn-custom btn-action btn-end-auction">END</button>
                     <button id="timerToggleBtn" class="btn-custom btn-action"><i class="bi bi-pause-fill"></i></button>
@@ -763,7 +815,7 @@
                 <button class="btn btn-sm btn-outline-light rounded-0" data-bs-toggle="modal"
                     data-bs-target="#listModal" onclick="renderPlayerPool()">PLAYERS</button>
 
-              
+
             </div>
         </header>
 
@@ -985,5 +1037,3 @@
 </body>
 
 </html>
-
-
