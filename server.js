@@ -660,12 +660,12 @@ const PITCH_TYPES = {
   }
 };
 
-
-
 // --- NEW REALISTIC ENGINE ---
 // --- FINAL BALL ENGINE (WITH PITCH INFLUENCE) ---
-function simulateBall(batsman, bowler, phase = "middle", pitch = PITCH_TYPES.COMMON) {
+function simulateBall(batsman, bowler, phase = "middle", pitch = PITCH_TYPES.COMMON, luckModifier = 0) {
   let luck = Math.floor(Math.random() * 10) + 1;
+
+  luck += luckModifier; // Applied from context
 
   // Pitch influence
   luck += pitch.luckShift;
@@ -684,9 +684,18 @@ function simulateBall(batsman, bowler, phase = "middle", pitch = PITCH_TYPES.COM
 
   // Clamp luck to ensure valid range 1-10+ (Logic handles >9 anyway, but let's keep it sane if needed, though high luck = OUT)
   // Actually, don't clamp high, as high = Wicket. Clamp low to 1.
+  // Clamp luck
   luck = Math.max(1, luck);
 
-  return resolveBall(luck, batsman, pitch);
+  let result = resolveBall(luck, batsman, pitch);
+
+  // ERROR 3 FIX: Buff Bowler Impact (Reduce runs)
+  if ((bowler.bowl || 50) > 85 && result.legal && !result.wicket) {
+      result.runs = Math.max(0, result.runs - 1);
+      // Update commentary if needed, or simplistic
+  }
+
+  return result;
 }
 
 function resolveBall(luck, batsman, pitch) {
@@ -827,6 +836,11 @@ function runNewLogicSimulation(teams) {
     // CLONE playing11 to avoid permanent mutation, but respect order
     const battingOrder = [...batTeam.playing11];
     
+    // ERROR 1 & 2: Limits
+    const MAX_BALLS = 120;
+    let totalBalls = 0;
+    const bowlerOvers = {}; // Track overs per bowler
+
     // Track Impact Usage Local to Innings
     let impactUsed = false;
 
@@ -852,9 +866,29 @@ function runNewLogicSimulation(teams) {
     // --- OVER LOOP ---
     for (let over = 0; over < 20; over++) {
        if (wickets >= 10 || (target && score > target)) break;
+       // ERROR 1: Safety break
+       if (totalBalls >= MAX_BALLS) break;
 
-       // Select Bowler
-       const bowlerObj = validBowlers[over % validBowlers.length];
+       // Select Bowler (ERROR 2: 4-Over Limit)
+       let bowlerObj = null;
+       let attempts = 0;
+       while(!bowlerObj && attempts < 10) {
+           const candidate = validBowlers[(over + attempts) % validBowlers.length];
+           if (!bowlerOvers[candidate.name]) bowlerOvers[candidate.name] = 0;
+           
+           if (bowlerOvers[candidate.name] < 4) {
+               bowlerObj = candidate;
+           } else {
+               attempts++;
+           }
+       }
+       // Fallback if everyone bowled out (rare)
+       if (!bowlerObj) bowlerObj = validBowlers[over % validBowlers.length];
+
+       // Increment Over Count
+       if (!bowlerOvers[bowlerObj.name]) bowlerOvers[bowlerObj.name] = 0;
+       bowlerOvers[bowlerObj.name]++;
+       
        if (!bowlCardMap[bowlerObj.name]) {
            bowlCardMap[bowlerObj.name] = { name: bowlerObj.name, runs: 0, wkts: 0, balls: 0, economy: 0 };
        }
@@ -867,8 +901,8 @@ function runNewLogicSimulation(teams) {
 
        let balls = 0;
        
-       // --- BALL LOOP ---
-       while (balls < 6) {
+       // --- BALL LOOP (ERROR 1 FIX: Check totalBalls) ---
+       while (balls < 6 && totalBalls < MAX_BALLS) {
            if (wickets >= 10 || (target && score > target)) break;
 
            const striker = battingOrder[strikerIndex];
@@ -878,7 +912,45 @@ function runNewLogicSimulation(teams) {
            // AGGRESSION BIAS
            const wicketTakerBias = (bowlerObj.bowl > 85) ? 2 : (bowlerObj.bowl > 75 ? 1 : 0);
            
-           const result = simulateBall(striker, bowlerObj, phase, pitch);
+           // ERROR 4 & 7: Chase Pressure & Soft Cap
+           // Pass context via luck modification or arguments? modifying simulateBall is hard signature change.
+           // We'll modify the input phase or handle it via a wrapper?
+           // Easiest: modify 'pitch' temporarily? No.
+           // Better: Add logic here to modify luck before simulateBall? simulateBall calcs luck internally.
+           // We can't easily inject without changing simulateBall signature.
+           // Wait, simulateBall consumes 'phase'. We can hijack 'phase' or just accept simulateBall logic is strictly luck-based
+           // and we modifier luck *inside* simulateBall? But simulateBall is outside this scope.
+           
+           // Let's modify simulateBall signature? excessive.
+           // FIX: Modify simulateBall to accept 'pressureLuck'.
+           // NO, user provided logic: "if (rrr > 10) luck += 1".
+           // This implies access to luck variable.
+           // Implementation: Logic must be INSIDE simulateBall or passed to it.
+           // I will simply modify simulateBall to take an optional 'luckModifier' argument.
+           
+           let luckModifier = 0;
+           // Chase Pressure
+           if (target) {
+              const ballsLeft = MAX_BALLS - totalBalls;
+              const runsLeft = target - score;
+              if (ballsLeft > 0) {
+                  const rrr = runsLeft / (ballsLeft / 6);
+                  if (rrr > 10) luckModifier += 1;
+                  if (rrr > 12) luckModifier += 2;
+              }
+           }
+           // Soft Cap
+           if (score > 260) luckModifier += 2; // Collapse likely
+
+           // We need to pass this to simulateBall. 
+           // I'll update simulateBall to accept 5th arg, OR just add to phase string? hacky.
+           // I will update simulateBall definition in next step or use a global? No.
+           // For now, let's assume I update simulateBall separately or below.
+           
+           // Actually, I can wrap the result. If luckModifier > 0, we can re-roll? No.
+           // I will update simulateBall signature in a separate chunk.
+
+           const result = simulateBall(striker, bowlerObj, phase, pitch, luckModifier);
            
            // FREE HIT LOGIC FIX: Wicket does not count on Free Hit
            if (result.wicket && isFreeHit) {
@@ -902,6 +974,7 @@ function runNewLogicSimulation(teams) {
            // Legality
            if (result.legal) {
                balls++;
+               totalBalls++; // ERROR 1 FIX
                strikerStats.balls++;
                bowlerStats.balls++;
                if (isFreeHit) isFreeHit = false;
@@ -951,8 +1024,9 @@ function runNewLogicSimulation(teams) {
            [strikerIndex, nonStrikerIndex] = [nonStrikerIndex, strikerIndex];
        }
        
-       // --- IMPACT PLAYER LOGIC ---
-       if (over >= 9 && !impactUsed && batTeam.impact && batCard[10].status === "dnb") {
+       // --- IMPACT PLAYER LOGIC (ERROR 5 FIX) ---
+       // Replaces only if wickets >= 5
+       if (!impactUsed && batTeam.impact && wickets >= 5 && batCard[10].status === "dnb") {
             const impactPlayer = batTeam.impact;
             battingOrder[10] = impactPlayer; 
             batCard[10].name = impactPlayer.name;
@@ -1098,6 +1172,14 @@ function runNewLogicSimulation(teams) {
   }
 
   const statsArr = Object.values(allStats);
+
+  // ERROR 6 FIX: Align Data Shape for Frontend (clean fix)
+  teams.forEach(t => {
+      t.p = t.stats.played;
+      t.w = t.stats.won;
+      t.l = t.stats.lost;
+      t.pts = t.stats.pts;
+  });
 
   return {
     winner: champion,
