@@ -1588,3 +1588,54 @@ h5,
 .modal-backdrop {
   z-index: 3040 !important;
 }
+
+/* ================================
+   SCORECARD VISIBILITY FIX
+================================ */
+
+#scorecardModal table,
+#scorecardModal th,
+#scorecardModal td {
+  color: #eaeaea !important;
+}
+
+#scorecardModal thead th {
+  color: #f5c542 !important; /* IPL gold */
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid #444;
+}
+
+#scorecardModal tbody tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+#scorecardModal tbody tr:last-child {
+  border-bottom: none;
+}
+
+#scorecardModal td:first-child {
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+#scorecardModal td {
+  font-size: 0.8rem;
+}
+
+#scorecardModal td.text-warning {
+  color: #ffcc00 !important;
+}
+
+#scorecardModal td.text-info {
+  color: #4dd0e1 !important;
+}
+
+#scorecardModal tbody tr:hover {
+  background: rgba(255, 215, 0, 0.08);
+}
+
+#scorecardModal table {
+  background: #0b0b0b;
+  border-radius: 8px;
+}
