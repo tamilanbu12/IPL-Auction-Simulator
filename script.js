@@ -290,11 +290,14 @@ socket.on("reconnect", () => {
 
 socket.on("pongServer", () => {});
 
-window.addEventListener("beforeunload", (e) => {
-  e.preventDefault();
-  e.returnValue = "";
-  return "";
-});
+if (!window._beforeUnloadBound) {
+  window._beforeUnloadBound = true;
+  window.addEventListener("beforeunload", (e) => {
+    e.preventDefault();
+    e.returnValue = "";
+    return "";
+  });
+}
 
 // ======================================================
 // 📊 PLAYER DATABASE (RESTORED)
@@ -2016,7 +2019,34 @@ function countForeigners(list) {
   return list.filter((p) => p.playerType === "Foreign").length;
 }
 function countKeepers(list) {
-  return list.filter((p) => (p.roleKey||"").toLowerCase().includes("wk") || (p.roleKey||"").toLowerCase() === "wicketkeeper").length;
+  // FIXED: Strict check as requested
+  return list.filter(p => p.roleKey && p.roleKey.toLowerCase() === "wk").length;
+}
+
+// --- GLOBAL HELPERS (Moved from socket handlers) ---
+function normalizeTeamStats(team) {
+  return {
+    p: team.stats?.played ?? 0,
+    w: team.stats?.won ?? 0,
+    l: team.stats?.lost ?? 0,
+    pts: team.stats?.pts ?? 0,
+    nrr: team.stats?.nrr?.toFixed?.(3) ?? "0.000",
+    name: team.name
+  };
+}
+
+function clampT20Score(scoreStr) {
+  if (!scoreStr) return "0/0";
+  const [runs, wkts = "0"] = scoreStr.toString().split("/");
+  const cappedRuns = Math.min(parseInt(runs) || 0, 260);
+  return `${cappedRuns}/${wkts}`;
+}
+
+function formatOver(balls) {
+  if (!balls) return "0.0";
+  const o = Math.floor(balls / 6);
+  const b = balls % 6;
+  return `${o}.${b}`;
 }
 
 function renderMySquadSelection() {
@@ -2060,7 +2090,11 @@ function renderMySquadSelection() {
 }
 
 function toggleP11(i, name) {
-  const p = globalTeams.find((t) => t.bidKey === mySelectedTeamKey).roster[i];
+  // FIXED: Name-based lookup to avoid index desync
+  const team = globalTeams.find((t) => t.bidKey === mySelectedTeamKey);
+  const p = team.roster.find((x) => x.name === name);
+  
+  if (!p) return; // safety
   if (mySelectedImpact && mySelectedImpact.name === name)
     return alert("Already Impact Player");
   const idx = mySelectedSquad11.findIndex((x) => x.name === name);
@@ -2078,7 +2112,9 @@ function toggleP11(i, name) {
 }
 
 function toggleImpact(i, name) {
-  const p = globalTeams.find((t) => t.bidKey === mySelectedTeamKey).roster[i];
+  const team = globalTeams.find((t) => t.bidKey === mySelectedTeamKey);
+  const p = team.roster.find((x) => x.name === name);
+  if (!p) return;
   if (mySelectedSquad11.find((x) => x.name === name))
     return alert("Already in Playing XI");
   mySelectedImpact =
@@ -2231,20 +2267,33 @@ socket.on("tournamentComplete", (results) => {
   document.getElementById("resMvp").innerText = results.mvp.name;
   document.getElementById("resMvpStat").innerText = `${results.mvp.pts} Pts`;
 
+
+function renderLeaderboard(results) {
   const ptBody = document.getElementById("pointsTableBody");
   ptBody.innerHTML = "";
 
   if (results.standings) {
     results.standings.forEach((t, i) => {
-      ptBody.innerHTML += `<tr><td>${i + 1}</td><td class="text-start">${
-        t.name
-      }</td><td>${t.stats.p}</td><td>${t.stats.w}</td><td>${
-        t.stats.l
-      }</td><td>${(t.stats.nrr || 0).toFixed(3)}</td><td>${
-        t.stats.pts
+      const s = normalizeTeamStats(t);
+      let row = `<tr><td>${i + 1}</td><td><div class="d-flex align-items-center"><div class="logo-box me-2" style="font-size:1rem;padding:2px 8px;">${
+        t.logo || t.name.substring(0, 2).toUpperCase()
+      }</div>${s.name}</div></td><td class="text-center">${
+        s.p
+      }</td><td class="text-center text-success">${
+        s.w
+      }</td><td class="text-center text-danger">${
+        s.l
+      }</td><td class="text-center fw-bold">${
+        s.nrr
+      }</td><td class="text-center fw-bold text-warning">${
+        s.pts
       }</td></tr>`;
+      ptBody.innerHTML += row;
     });
   }
+}
+
+  renderLeaderboard(results);
 
   // --- POPULATE FILTER DROPDOWN ---
   const select = document.getElementById("matchFilterTeam");
@@ -2359,13 +2408,13 @@ function createMatchCard(m, isPlayoff = false, index) {
   }" ${clickFn} style="cursor: pointer;"><div class="match-header"><div class="match-type-label">${m.type.toUpperCase()}</div><div class="mom-star"><i class="bi bi-star-fill"></i> ${momName}</div></div><div class="match-content"><div class="team-score-box"><div class="ts-name">${
     m.t1
   }</div><div class="ts-score">${
-    m.score1.split("/")[0]
+    clampT20Score(m.score1).split("/")[0]
   }<span class="fs-6 text-white-50">/${
     m.score1.split("/")[1]
   }</span></div></div><div class="vs-tag">VS</div><div class="team-score-box"><div class="ts-name">${
     m.t2
   }</div><div class="ts-score">${
-    m.score2.split("/")[0]
+    clampT20Score(m.score2).split("/")[0]
   }<span class="fs-6 text-white-50">/${
     m.score2.split("/")[1]
   }</span></div></div></div><div class="win-status">${m.winnerName} won by ${
@@ -2384,6 +2433,13 @@ function openScorecard(type, index) {
       : lastTournamentData.playoffs[index];
   
   if (!matchData) return;
+  
+  // Guard: If matchData is mangled
+  if (typeof matchData !== 'object' || !matchData.t1 || !matchData.t2) {
+      console.error("Invalid match data", matchData);
+      return;
+  }
+
   if (!matchData.details) {
      const modalBody = document.getElementById("detailedScorecardContent");
      modalBody.innerHTML = "<div class='p-4 text-white text-center'>Detailed scorecard not generated for this match.</div>";
@@ -2402,7 +2458,7 @@ function openScorecard(type, index) {
       inn.bat.forEach(b => {
           batRows += `
           <tr style="border-bottom: 1px solid #333;">
-            <td class="text-white">${b.name} ${b.status === "not out" ? "*" : ""}</td>
+            <td class="text-white">${b.name || b.player || "Unknown"} ${b.status === "not out" ? "*" : ""}</td>
             <td class="text-end fw-bold text-warning">${b.runs}</td>
             <td class="text-end text-white-50">${b.balls}</td>
             <td class="text-end text-white-50">${b.fours}</td>
@@ -2414,11 +2470,11 @@ function openScorecard(type, index) {
       let bowlRows = "";
       inn.bowl.forEach(b => {
           bowlRows += `
-          <tr style="border-bottom: 1px solid #333;">
-            <td class="text-white">${b.name}</td>
-            <td class="text-end text-white-50">${b.oversDisplay}</td>
+          <tr style="border-bottom: 1px solid #333; ${b.wkts >= 3 ? 'background: rgba(138, 43, 226, 0.15);' : ''}">
+            <td class="text-white">${b.name || b.player || "Unknown"}</td>
+            <td class="text-end text-white-50">${b.oversDisplay || formatOver(b.balls)}</td>
             <td class="text-end text-white-50">${b.runs}</td>
-            <td class="text-end fw-bold text-info">${b.wkts}</td>
+            <td class="text-end fw-bold ${b.wkts >= 3 ? 'text-warning' : 'text-info'}">${b.wkts}</td>
             <td class="text-end text-white-50">${b.economy}</td>
           </tr>`;
       });
