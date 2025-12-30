@@ -60,13 +60,24 @@ function startTimer(roomId) {
 
   r.timer = AUCTION_TIMER_SECONDS;
   r.timerPaused = false;
+  
+  // Anti-Drift: precise end time
+  r.timerEndTime = Date.now() + (r.timer * 1000);
 
   io.to(roomId).emit("timer_tick", r.timer);
   io.to(roomId).emit("timer_status", false);
 
   r.timerInterval = setInterval(() => {
-    if (r.timerPaused) return;
-    r.timer--;
+    if (r.timerPaused) {
+       // If paused, dragging the end time forward so we don't jump when unpaused
+       r.timerEndTime += 1000;
+       return;
+    }
+    
+    // Calculate remaining based on system clock
+    const remaining = Math.ceil((r.timerEndTime - Date.now()) / 1000);
+    r.timer = remaining;
+
     io.to(roomId).emit("timer_tick", r.timer);
     if (r.timer <= 0) {
       processSale(roomId);
@@ -247,6 +258,12 @@ io.on("connection", (socket) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     if (r) {
+      let remaining = r.timer;
+      if (!r.timerPaused && r.timerEndTime) {
+         remaining = Math.ceil((r.timerEndTime - Date.now()) / 1000);
+         if (remaining < 0) remaining = 0;
+      }
+      
       socket.emit("sync_data", {
         teams: r.teams,
         queue: r.auctionQueue,
@@ -254,7 +271,7 @@ io.on("connection", (socket) => {
         currentLot: r.currentPlayer,
         currentBid: r.currentBid,
         currentBidder: r.currentBidder,
-        timer: r.timer,
+        timer: remaining,
         timerPaused: r.timerPaused,
       });
     }
@@ -262,6 +279,7 @@ io.on("connection", (socket) => {
 
   socket.on("update_lobby_teams", (teams) => {
     const roomId = getRoomId(socket);
+    if (!isAdmin(socket)) return;
     if (rooms[roomId]) {
       rooms[roomId].teams = teams;
       io.to(roomId).emit("lobby_update", {
@@ -366,12 +384,14 @@ io.on("connection", (socket) => {
   });
 
   // START AUCTION - Accepts filtered teams list
-  socket.on("start_auction", ({ teams, queue }) => {
+  socket.on("start_auction", ({ queue }) => {
     const roomId = getRoomId(socket);
     const r = rooms[roomId];
     if (r && isAdmin(socket)) {
-      // Replace existing teams with the filtered "Active" list sent by Host
-      r.teams = teams.map((t) => ({
+      // SECURITY FIX: Use Server Internal State for Teams, do not trust client 'teams'
+      const activeTeams = r.teams.filter(t => t.isTaken);
+      
+      r.teams = activeTeams.map((t) => ({
         ...t,
         roster: [],
         totalSpent: 0,
@@ -459,17 +479,17 @@ io.on("connection", (socket) => {
         submittedCount: Object.keys(r.squads).length,
         totalTeams: r.teams.filter((t) => t.isTaken).length,
       });
+
+      // Auto-start simulation if all teams have submitted
+      const activeTeamsCount = r.teams.filter((t) => t.isTaken).length;
+      if (Object.keys(r.squads).length === activeTeamsCount) {
+         console.log("All squads submitted. Auto-starting simulation...");
+         runSimulationLogic(roomId, r);
+      }
     }
   });
 
-  socket.on("run_simulation", () => {
-    const roomId = getRoomId(socket);
-    const r = rooms[roomId];
-    if (r && isAdmin(socket)) {
-      console.log("Starting Simulation for Room:", roomId);
-      runSimulationLogic(roomId, r);
-    }
-  });
+
 
   // Added to support the previous script listener
   socket.on("startTournament", (data) => {
@@ -541,7 +561,7 @@ function runSimulationLogic(roomId, r) {
     const results = runNewLogicSimulation(tourneyTeams);
     console.log("Simulation complete, sending results.");
     // Sending 'tournament_results' to match frontend listener in script.js
-    io.to(roomId).emit("tournament_results", results);
+    io.to(roomId).emit("tournamentComplete", results);
   } catch (e) {
     console.error("Simulation Error:", e);
     io.to(roomId).emit("simulation_error", "Server Logic Error: " + e.message);
@@ -584,87 +604,114 @@ const getPriority = (roleKey) => {
 };
 
 // 3. The Core Ball-by-Ball Logic
-function playBall(batsman, bowler) {
-  const luck = getLuck();
+// 3. The Core Ball-by-Ball Logic (Rebalanced for T20)
+// --- SIMULATION HELPERS ---
 
-  // Determine if the current batsman is a "Weak Hitter" (Bowler types)
-  const role = (batsman.roleKey || "").toLowerCase();
-  const isWeakHitter =
-    (role.includes("spin") || role.includes("fast") || role.includes("bowl")) &&
-    !role.includes("all");
+const BATTER_PROFILE = {
+  opener: { aggression: 0.6, risk: 0.4 },
+  anchor: { aggression: 0.35, risk: 0.2 }, // Tuned: Slower accumulation
+  finisher: { aggression: 0.9, risk: 0.65 },
+  allrounder: { aggression: 0.55, risk: 0.4 },
+  bowler: { aggression: 0.2, risk: 0.7 },
+};
 
-  let result = {
-    runs: 0,
-    isOut: false,
-    commentary: "",
-    luck: luck,
-    type: "runs",
-  };
+function getBatterProfile(roleKey) {
+  const r = (roleKey || "").toLowerCase();
+  if (r.includes("finisher")) return BATTER_PROFILE.finisher;
+  if (r.includes("opener")) return BATTER_PROFILE.opener;
+  if (r.includes("all")) return BATTER_PROFILE.allrounder;
+  if (r.includes("bowl") || r.includes("spin") || r.includes("fast"))
+    return BATTER_PROFILE.bowler;
+  return BATTER_PROFILE.anchor;
+}
 
-  if (isWeakHitter) {
-    // --- BOWLER BATTING LOGIC (Weak Hitters) ---
-    // Luck > 8 (9, 10): 6 Runs (Rare power)
-    if (luck > 8) {
-      result.runs = 6;
-      result.type = "six";
-      result.commentary = "Unbelievable! The bowler smashes a SIX!";
-    }
-    // Luck > 6 (7, 8): 4 Runs
-    else if (luck > 6) {
-      result.runs = 4;
-      result.type = "four";
-      result.commentary = "Lucky edge implies a FOUR.";
-    }
-    // Luck > 4 (5, 6): 2-3 Runs
-    else if (luck > 4) {
-      result.runs = Math.floor(Math.random() * 2) + 2; // 2 or 3
-      result.commentary = "Pushed into the gap for runs.";
-    }
-    // Luck > 3 (4): 1 Run
-    else if (luck > 3) {
-      result.runs = 1;
-      result.commentary = "Quick single taken.";
-    }
-    // Luck <= 3 (1, 2, 3): OUT (High probability of getting out for weak hitters)
-    else {
-      result.isOut = true;
-      result.commentary = "Clean bowled! The bowler misses completely.";
-    }
-  } else {
-    // --- BATSMAN / ALL-ROUNDER LOGIC (Risk-Reward) ---
+function getPhase(over) {
+  if (over <= 6) return "powerplay";
+  if (over <= 15) return "middle";
+  return "death";
+}
 
-    // Luck > 8 (9, 10): OUT (Bad luck / Caught on boundary)
-    if (luck > 8) {
-      result.isOut = true;
-      result.commentary = "Caught on the boundary! High risk shot fails.";
-    }
-    // Luck > 6 (7, 8): Dot Ball
-    else if (luck > 6) {
-      result.runs = 0;
-      result.commentary = "Good delivery, straight to the fielder. Dot ball.";
-    }
-    // Luck > 4 (5, 6): Boundary (4 or 6)
-    else if (luck > 4) {
-      result.runs = Math.random() < 0.5 ? 4 : 6;
-      result.type = result.runs === 4 ? "four" : "six";
-      result.commentary =
-        result.runs === 4
-          ? "Beautiful cover drive for FOUR!"
-          : "Huge SIX over mid-wicket!";
-    }
-    // Luck > 3 (4): 1-3 Runs
-    else if (luck > 3) {
-      result.runs = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
-      result.commentary = "Working the ball around for runs.";
-    }
-    // Luck <= 3 (1, 2, 3): Boundary (Risk-Reward payoff)
-    else {
-      result.runs = Math.random() < 0.5 ? 4 : 6;
-      result.type = result.runs === 4 ? "four" : "six";
-      result.commentary = "Edged but safe! It flies for a boundary!";
-    }
+function chooseShot(profile, phase, pressure) {
+  let boundaryChance = profile.aggression;
+
+  if (phase === "powerplay") boundaryChance += 0.1;
+  if (phase === "death") boundaryChance += 0.25;
+  if (pressure > 9) boundaryChance += 0.2;
+
+  // Anchor Cap: Anchors don't go wild unless necessary
+  if (profile === BATTER_PROFILE.anchor && phase !== "death" && pressure < 8) {
+     boundaryChance = Math.min(boundaryChance, 0.5);
   }
 
+  return Math.min(boundaryChance, 0.95);
+}
+
+function getBowlerType(roleKey) {
+  const r = (roleKey || "").toLowerCase();
+  if (r.includes("spin")) return "spin";
+  if (r.includes("fast") || r.includes("pace")) return "pace";
+  return "medium";
+}
+
+function bowlerImpact(bowlerType, phase) {
+  // Realism Tune: Middle overs = Stability (More dots, fewer wickets)
+  if (bowlerType === "spin" && phase === "middle") return { dot: 0.2, wicket: 0.08 };
+  if (bowlerType === "pace" && phase === "death") return { dot: 0.1, wicket: 0.15 };
+  return { dot: 0.05, wicket: 0.05 };
+}
+
+// --- NEW REALISTIC ENGINE ---
+function playBall(batsman, bowler, context) {
+  const luck = getLuck();
+  const profile = getBatterProfile(batsman.roleKey);
+  const phase = getPhase(context.over);
+  // Default RRR of 8 if setting target, else calc real RRR
+  const pressure = context.requiredRunRate || 8; 
+  const bowlerType = getBowlerType(bowler.roleKey);
+  const impact = bowlerImpact(bowlerType, phase);
+
+  let result = { runs: 0, isOut: false, type: "runs", commentary: "" };
+
+  // Wicket chance (modified by luck to keep user's luck stat relevant but minimal)
+  // High luck reduces out chance slightly
+  const luckFactor = (10 - luck) * 0.02; 
+  
+  if (Math.random() < (profile.risk + impact.wicket + luckFactor) * 0.15) {
+    result.isOut = true;
+    result.type = "out";
+    result.commentary = "Caught! The risk didn't pay off.";
+    return result;
+  }
+
+  // Dot ball chance
+  if (Math.random() < impact.dot) {
+    result.runs = 0;
+    result.commentary = "Excellent delivery. No run.";
+    return result;
+  }
+
+  // Boundary decision
+  const boundaryChance = chooseShot(profile, phase, pressure);
+  // Luck boosts boundary chance
+  if (Math.random() < boundaryChance * (luck / 5)) {
+    result.runs = Math.random() < 0.65 ? 4 : 6;
+    
+    // Realism Tune: Bowlers rarely hit 6s unless Luck is perfect
+    if (profile === BATTER_PROFILE.bowler && result.runs === 6 && luck < 10) {
+        result.runs = 4; // Downgrade to 4
+        result.commentary = "Edged down to third man for FOUR."; 
+    }
+
+    result.type = result.runs === 4 ? "four" : "six";
+    if (!result.commentary) {
+         result.commentary = result.runs === 4 ? "Smashed for FOUR!" : "That's huge! SIX runs!";
+    }
+    return result;
+  }
+
+  // Strike rotation (1s, 2s, 3s)
+  result.runs = Math.floor(Math.random() * 3) + 1;
+  result.commentary = "Working the gaps.";
   return result;
 }
 
@@ -712,7 +759,7 @@ function runNewLogicSimulation(teams) {
   };
 
   // --- INNINGS SIMULATOR ---
-  function simulateInnings(batTeam, bowlTeam, target = null) {
+  function simulateInnings(batTeam, bowlTeam, target = null, pitchType = "flat") {
     // 1. Sort Batting Lineup based on Roles
     const battingLineup = [...batTeam.playing11].sort(
       (a, b) => getPriority(a.roleKey) - getPriority(b.roleKey)
@@ -720,7 +767,7 @@ function runNewLogicSimulation(teams) {
 
     // 2. Prepare Bowling Options (All non-WK usually)
     let bowlers = bowlTeam.playing11.filter(
-      (p) => !getPriority(p.roleKey) === 1
+      (p) => getPriority(p.roleKey) !== 1
     ); // exclude openers/wk usually
     // Prioritize actual bowlers/ARs
     bowlers = bowlTeam.playing11.filter((p) => {
@@ -734,6 +781,7 @@ function runNewLogicSimulation(teams) {
       );
     });
     if (bowlers.length < 5) bowlers = bowlTeam.playing11.slice(5); // fallback
+    if (bowlers.length === 0) bowlers = bowlTeam.playing11; // Extreme fallback (squad < 5)
 
     // Card Data for Scorecard
     const batCard = battingLineup.map((p) => ({
@@ -757,7 +805,8 @@ function runNewLogicSimulation(teams) {
     if (batCard[nonStrikerIdx]) batCard[nonStrikerIdx].status = "not out";
 
     for (let ball = 1; ball <= 120; ball++) {
-      if (wickets >= 10 || (target && score > target)) break;
+      // Safety check: Stop if wickets exceed available batters (e.g. squad < 11)
+      if (wickets >= 10 || wickets >= batCard.length - 1 || (target && score > target)) break;
 
       const currentBatsman = batCard[strikerIdx];
       const originalBatsmanObj = battingLineup[strikerIdx];
@@ -790,13 +839,40 @@ function runNewLogicSimulation(teams) {
         bowlerObj = bowlers[bowlerIndex];
         attempts++;
       }
-      
-      // Fallback: If all exhausted (rare), use original (shouldn't happen in 20 overs)
+
+      // Fallback: If all main bowlers exhausted, find ANYONE who can bowl
+      if (attempts >= bowlers.length) {
+          const partTimer = bowlTeam.playing11.find(p => {
+              const bg = bowlCardMap[p.name];
+              return !bg || bg.balls < 24;
+          });
+          if (partTimer) {
+             bowlerObj = partTimer;
+          } else {
+             // Absolute worst case: Allow overflow
+             bowlerObj = bowlers[0]; 
+          }
+           // Ensure stats exist for safety
+           if (!bowlCardMap[bowlerObj.name]) {
+              bowlCardMap[bowlerObj.name] = {
+                  name: bowlerObj.name,
+                  runs: 0, wkts: 0, balls: 0, economy: 0
+              };
+           }
+      }
       
       const bowlerStats = bowlCardMap[bowlerObj.name];
 
       // --- PLAY BALL ---
-      const res = playBall(originalBatsmanObj, bowlerObj);
+      const context = {
+        over: Math.floor((ball - 1) / 6) + 1,
+        wickets: wickets,
+        requiredRunRate: target
+          ? Math.max(0, (target - score) / (Math.max(1, 120 - (ball - 1)) / 6))
+          : null,
+      };
+
+      const res = playBall(originalBatsmanObj, bowlerObj, context);
 
       currentBatsman.balls++;
       bowlerStats.balls++;
@@ -813,7 +889,7 @@ function runNewLogicSimulation(teams) {
         // Next Batsman
         // Next Batsman (Logic: Wickets count = previous outs + 1 current out. 
         // So new batter index = wickets + 1, because 0 and 1 were openers)
-        strikerIdx = wickets + 1;
+        strikerIdx = Math.min(wickets + 1, batCard.length - 1);
         if (batCard[strikerIdx]) batCard[strikerIdx].status = "not out";
       } else {
         score += res.runs;
@@ -866,8 +942,11 @@ function runNewLogicSimulation(teams) {
   }
 
   function playMatch(t1, t2, type) {
-    const i1 = simulateInnings(t1, t2);
-    const i2 = simulateInnings(t2, t1, i1.score);
+    // Determine Pitch Condition: 25% Bowling, 75% Batting (Flat)
+    const pitchType = Math.random() < 0.25 ? "bowling" : "flat";
+    
+    const i1 = simulateInnings(t1, t2, null, pitchType);
+    const i2 = simulateInnings(t2, t1, i1.score, pitchType);
 
     let winnerName = i2.score > i1.score ? t2.name : t1.name;
     if (i1.score === i2.score) winnerName = t1.name; // Simple tie-break
@@ -928,12 +1007,13 @@ function runNewLogicSimulation(teams) {
   }
 
   // --- LEAGUE GENERATION (Double Round Robin) ---
-  // 2 Matches against every team
+  // 2 Matches against every team (Home and Away)
   for (let i = 0; i < teams.length; i++) {
-    for (let j = 0; j < teams.length; j++) {
-      if (i !== j) {
+    for (let j = i + 1; j < teams.length; j++) {
+        // Match 1: i vs j
         leagueMatches.push(playMatch(teams[i], teams[j], "League"));
-      }
+        // Match 2: j vs i
+        leagueMatches.push(playMatch(teams[j], teams[i], "League"));
     }
   }
 
